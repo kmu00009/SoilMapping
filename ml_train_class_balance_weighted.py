@@ -30,12 +30,9 @@ def split_data(data):
     return train, validate, test
 
 def compute_class_weights(y):
-    classes = np.unique(y)
-    if len(classes) < 2:
-        raise ValueError("At least two classes are required for weighting.")
-    weights = compute_class_weight('balanced', classes=classes, y=y)
-    class_weights = dict(zip(classes, weights))
-    sample_weights = np.array([class_weights.get(label, 1.0) for label in y])
+    classes, counts = np.unique(y, return_counts=True)
+    class_weights = {cls: np.sqrt(max(counts) / count) for cls, count in zip(classes, counts)}
+    sample_weights = np.array([class_weights[label] for label in y])
     return sample_weights
 
 def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pathC, model_name, report, num_features):
