@@ -206,7 +206,7 @@ def plot_metrics(feature_counts, accuracies_train, accuracies_valid, accuracies_
 
 if __name__ == "__main__":
     start = time.time()
-    pathC = '..classification/'  # Adjust path as needed
+    pathC = 'classification/'  # Adjust path as needed
     training_file = os.path.join(pathC, 'trainingSample.csv')
     os.makedirs(pathC, exist_ok=True)
     
