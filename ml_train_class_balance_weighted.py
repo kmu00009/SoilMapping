@@ -258,20 +258,21 @@ if __name__ == "__main__":
     
     # Train initial model to get feature importances
     initial_model = xgb.XGBClassifier(
-        random_state=42,
-        enable_categorical=True,
-        objective='multi:softmax',
-        num_class=len(np.unique(y_train)),
-        eval_metric='mlogloss',
-        tree_method='hist',
-        n_estimators=300,
-        learning_rate=0.01,
-        max_depth=5
+    random_state=42, enable_categorical=True, objective='multi:softmax',
+    num_class=len(np.unique(y_train)), eval_metric='mlogloss', tree_method='hist'
     )
-    initial_model.fit(X_train, y_train, sample_weight=compute_class_weights(y_train))
-    
-    # Get permutation feature importances
-    perm_importance = permutation_importance(initial_model, X_valid, y_validate, n_repeats=5, random_state=42, n_jobs=-1)
+    param_grid = {
+        'n_estimators': [100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [3, 4, 5]
+    }
+    random_search = RandomizedSearchCV(
+        initial_model, param_grid, n_iter=20, cv=3, scoring='f1_weighted',
+        n_jobs=-1, random_state=42
+    )
+    random_search.fit(X_train, y_train, sample_weight=compute_class_weights(y_train))
+    initial_model = random_search.best_estimator_
+    perm_importance = permutation_importance(initial_model, X_valid, y_validate, n_repeats=3, random_state=42, n_jobs=-1)
     feature_importance_df = pd.DataFrame({
         'Feature': X_train.columns,
         'Importance': perm_importance.importances_mean
