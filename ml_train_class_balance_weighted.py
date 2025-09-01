@@ -68,7 +68,7 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     random_search = RandomizedSearchCV(
         estimator=base_model,
         param_distributions=param_grid,
-        n_iter=100,  # Reduced for speed
+        n_iter=50,  # Reduced for speed
         cv=5,       # Reduced for speed
         scoring='f1_weighted',
         n_jobs=-1,  # Parallel processing
@@ -276,7 +276,8 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(3, len(X_train.columns) + 1, 2)
+    # feature_counts = range(3, len(X_train.columns) + 1, 2)
+    feature_counts = range(9, 14, 2)
     results = []
     
     for k in feature_counts:
