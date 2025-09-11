@@ -264,7 +264,7 @@ if __name__ == "__main__":
         'max_depth': [3, 4, 5]
     }
     random_search = RandomizedSearchCV(
-        initial_model, param_grid, n_iter=50, cv=5, scoring='f1_weighted',
+        initial_model, param_grid, n_iter=20, cv=3, scoring='f1_weighted',
         n_jobs=-1, random_state=42
     )
     random_search.fit(X_train, y_train, sample_weight=compute_class_weights(y_train))
