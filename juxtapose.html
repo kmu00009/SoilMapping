@@ -4,13 +4,84 @@
     <meta charset="UTF-8">
     <title>Soil Mapping Juxtapose Map</title>
     <link rel="stylesheet" href="https://cdn.knightlab.com/libs/juxtapose/latest/css/juxtapose.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        .legend {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .legend-right {
+            display: flex;
+            flex-wrap: wrap;
+            margin-right: 50px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-right: 15px;
+            margin-bottom: 5px;
+        }
+        .color-box {
+            width: 20px;
+            height: 20px;
+            margin-right: 5px;
+            border: 1px solid #000;
+        }
+        .legend-left {
+            display: flex;
+            align-items: center;
+        }
+        .gradient-bar {
+            width: 200px;
+            height: 20px;
+            background: linear-gradient(to right, #e5f5e0, #00441b); /* Greens */
+            border: 1px solid #000;
+            margin-left: 5px;
+        }
+        .legend-label {
+            margin-right: 5px;
+        }
+    </style>
 </head>
 <body>
-    <h1>Soil Mapping Before / After</h1>
+    <h1>Soil Mapping Juxtapose Slider</h1>
 
-    <iframe frameborder="0" class="juxtapose" width="100%" height="600" 
-        src="https://cdn.knightlab.com/libs/juxtapose/latest/embed/index.html?uid=4b642598-979a-11f0-ba1b-0e6f42328d7d">
-    </iframe>
+    <!-- Legend -->
+    <div class="legend">
+        <!-- Right Map (Discrete Classes) -->
+        <div class="legend-right">
+            <strong>Right Map Classes:</strong>
+            <div class="legend-item"><div class="color-box" style="background:#131727;"></div>1</div>
+            <div class="legend-item"><div class="color-box" style="background:#1436b6;"></div>2</div>
+            <div class="legend-item"><div class="color-box" style="background:#c15d72;"></div>3</div>
+            <div class="legend-item"><div class="color-box" style="background:#a80c35;"></div>4</div>
+            <div class="legend-item"><div class="color-box" style="background:#a12baf;"></div>5</div>
+            <div class="legend-item"><div class="color-box" style="background:#210c7d;"></div>6</div>
+            <div class="legend-item"><div class="color-box" style="background:#91bfe1;"></div>7</div>
+            <div class="legend-item"><div class="color-box" style="background:#deb952;"></div>8</div>
+            <div class="legend-item"><div class="color-box" style="background:#ebee73;"></div>9</div>
+            <div class="legend-item"><div class="color-box" style="background:#90a90b;"></div>10</div>
+            <div class="legend-item"><div class="color-box" style="background:#278fbe;"></div>11</div>
+            <div class="legend-item"><div class="color-box" style="background:#0d8050;"></div>12</div>
+        </div>
+
+        <!-- Left Map (Continuous) -->
+        <div class="legend-left">
+            <strong>Left Map Confidence:</strong>
+            <div class="gradient-bar"></div>
+        </div>
+    </div>
+
+    <!-- Juxtapose Slider -->
+    <div class="juxtapose" data-startingposition="50%">
+        <img src="outputs/soil_confidence_xgb_color.png" data-label="Left Map: Confidence (Greens)">
+        <img src="outputs/soil_predict_xgb_color.png" data-label="Right Map: Predicted Classes">
+    </div>
 
     <script src="https://cdn.knightlab.com/libs/juxtapose/latest/js/juxtapose.min.js"></script>
 </body>
