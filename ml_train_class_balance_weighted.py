@@ -123,38 +123,41 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     accuracy_train = round(accuracy_score(y_train, y_pred_train), 2)
     f1_train = round(f1_score(y_train, y_pred_train, average='weighted'), 2)
     cm_train = confusion_matrix(y_train, y_pred_train)
+    cr_train = classification_report(y_train, y_pred_train)
     print(f"\nAccuracy on training data ({num_features} features): {accuracy_train * 100:.2f}%")
     print(f"F1-Score (weighted) on training data: {f1_train * 100:.2f}%")
     print("Confusion Matrix (Train):")
     print(cm_train)
     print("Classification Report (Train):")
-    print(classification_report(y_train, y_pred_train))
+    print(cr_train)
     
     # Evaluate on validation data
     y_pred_valid = model.predict(dvalid).astype(int)
     accuracy_valid = round(accuracy_score(y_validate, y_pred_valid), 2)
     f1_valid = round(f1_score(y_validate, y_pred_valid, average='weighted'), 2)
     cm_valid = confusion_matrix(y_validate, y_pred_valid)
+    cr_valid = classification_report(y_validate, y_pred_valid)
     print(f"Accuracy on validation data ({num_features} features): {accuracy_valid * 100:.2f}%")
     print(f"F1-Score (weighted) on validation data: {f1_valid * 100:.2f}%")
     print("Confusion Matrix (Validation):")
     print(cm_valid)
     print("Classification Report (Validation):")
-    print(classification_report(y_validate, y_pred_valid))
+    print(cr_valid)
     
     # Evaluate on test data
     y_pred_test = model.predict(dtest).astype(int)
     accuracy_test = round(accuracy_score(y_test, y_pred_test), 2)
     f1_test = round(f1_score(y_test, y_pred_test, average='weighted'), 2)
     cm_test = confusion_matrix(y_test, y_pred_test)
+    cr_test = classification_report(y_test, y_pred_test)
     print(f"Accuracy on test data ({num_features} features): {accuracy_test * 100:.2f}%")
     print(f"F1-Score (weighted) on test data: {f1_test * 100:.2f}%")
     print("Confusion Matrix (Test):")
     print(cm_test)
     print("Classification Report (Test):")
-    print(classification_report(y_test, y_pred_test))
+    print(cr_test)
     
-    # Write report with confusion matrices
+    # Write report with confusion matrices and classification reports
     with open(os.path.join(pathC, report), "a") as f:
         f.write(f"\n\nResults for {num_features} features:\n")
         f.write(f"Best parameters: {best_params}\n")
@@ -163,12 +166,15 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         f.write(f"\nAccuracy on training data: {accuracy_train}")
         f.write(f"\nF1-Score (weighted) on training data: {f1_train}")
         f.write(f"\nConfusion Matrix (Train):\n{np.array2string(cm_train, separator=', ')}")
+        f.write(f"\nClassification Report (Train):\n{cr_train}")
         f.write(f"\nAccuracy on validation data: {accuracy_valid}")
         f.write(f"\nF1-Score (weighted) on validation data: {f1_valid}")
         f.write(f"\nConfusion Matrix (Validation):\n{np.array2string(cm_valid, separator=', ')}")
+        f.write(f"\nClassification Report (Validation):\n{cr_valid}")
         f.write(f"\nAccuracy on test data: {accuracy_test}")
         f.write(f"\nF1-Score (weighted) on test data: {f1_test}")
-        f.write(f"\nConfusion Matrix (Test):\n{np.array2string(cm_test, separator=', ')}\n")
+        f.write(f"\nConfusion Matrix (Test):\n{np.array2string(cm_test, separator=', ')}")
+        f.write(f"\nClassification Report (Test):\n{cr_test}\n")
     
     end = time.time()
     print(f"Time taken for {num_features} features: {convert(end - start)}")
@@ -281,7 +287,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(9, 14, 2)
+    feature_counts = range(1, 26, 2)
     results = []
     
     for k in feature_counts:
