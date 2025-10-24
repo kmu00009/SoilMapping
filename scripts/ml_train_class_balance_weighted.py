@@ -52,16 +52,17 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     
     # Define hyperparameter grid
     param_grid = {
-        'n_estimators': [50, 100, 200, 300],
-        'learning_rate': [0.001, 0.005, 0.01, 0.02, 0.03, 0.05, 0.1],
-        'max_depth': [2, 3, 4, 5],
-        'subsample': [0.5, 0.6, 0.8, 1.0],
-        'colsample_bytree': [0.5, 0.6, 0.8, 1.0],
-        'gamma': [0, 0.1, 0.5, 1.0],
-        'min_child_weight': [1, 5, 10, 20],
-        'reg_lambda': [0, 1, 10, 100], 
-        'reg_alpha': [0, 0.1, 1, 10],        
+    'n_estimators': [200, 300, 400],
+    'learning_rate': [0.05, 0.1, 0.2],
+    'max_depth': [4, 5, 6],
+    'min_child_weight': [5, 7, 10],
+    'gamma': [0.5, 1.0, 2.0],
+    'subsample': [0.6, 0.7, 0.8],
+    'colsample_bytree': [0.5, 0.6, 0.7],
+    'reg_lambda': [1, 10, 50],
+    'reg_alpha': [0.1, 1, 5]
     }
+    
     
     # Perform hyperparameter tuning
     random_search = RandomizedSearchCV(
@@ -214,7 +215,7 @@ def plot_metrics(feature_counts, accuracies_train, accuracies_valid, accuracies_
 
 if __name__ == "__main__":
     start = time.time()
-    pathC = 'classification/'  # Adjust path as needed
+    pathC = '../classification/'  # Adjust path as needed
     training_file = os.path.join(pathC, 'trainingSample.csv')
     os.makedirs(pathC, exist_ok=True)
     
@@ -222,6 +223,7 @@ if __name__ == "__main__":
     print('load the labelled data....')
     df = pd.read_csv(training_file)
     # df = df.drop(columns=['Land_cover'], errors='ignore')
+    df = df.drop_duplicates()
     df = df.dropna()
     
     # Prepare target and features
@@ -231,7 +233,7 @@ if __name__ == "__main__":
     
     print('assign categorical and numerical columns...')
     categorical_cols = ['Land_cover', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
-                        'Aggregate_texture', 'Peat', 'Aquifers']
+                        'Aggregate_texture', 'Aquifers', 'bedrock']
     for col in categorical_cols:
         if col in df.columns:
             df[col] = df[col].astype('category')
@@ -287,7 +289,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(1, 26, 2)
+    feature_counts = range(9, 14, 1)
     results = []
     
     for k in feature_counts:
