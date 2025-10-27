@@ -17,6 +17,28 @@ import joblib
 import time
 import os
 import matplotlib.pyplot as plt
+import psutil
+import logging
+from datetime import datetime
+
+def get_memory_usage():
+    """Get current memory usage in GB"""
+    process = psutil.Process(os.getpid())
+    gb = process.memory_info().rss / 1024 / 1024 / 1024
+    return f"{gb:.2f}GB"
+
+def setup_logging(pathC):
+    """Setup logging to both file and console"""
+    log_file = os.path.join(pathC, f'training_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()
+        ]
+    )
+    return log_file
 
 def convert(seconds):
     days = seconds // 86400
@@ -159,23 +181,53 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     print(cr_test)
     
     # Write report with confusion matrices and classification reports
-    with open(os.path.join(pathC, report), "a") as f:
-        f.write(f"\n\nResults for {num_features} features:\n")
-        f.write(f"Best parameters: {best_params}\n")
-        f.write("Permutation Feature Importances:\n")
-        f.write(feature_importance_df.to_string())
-        f.write(f"\nAccuracy on training data: {accuracy_train}")
-        f.write(f"\nF1-Score (weighted) on training data: {f1_train}")
-        f.write(f"\nConfusion Matrix (Train):\n{np.array2string(cm_train, separator=', ')}")
-        f.write(f"\nClassification Report (Train):\n{cr_train}")
-        f.write(f"\nAccuracy on validation data: {accuracy_valid}")
-        f.write(f"\nF1-Score (weighted) on validation data: {f1_valid}")
-        f.write(f"\nConfusion Matrix (Validation):\n{np.array2string(cm_valid, separator=', ')}")
-        f.write(f"\nClassification Report (Validation):\n{cr_valid}")
-        f.write(f"\nAccuracy on test data: {accuracy_test}")
-        f.write(f"\nF1-Score (weighted) on test data: {f1_test}")
-        f.write(f"\nConfusion Matrix (Test):\n{np.array2string(cm_test, separator=', ')}")
-        f.write(f"\nClassification Report (Test):\n{cr_test}\n")
+    report_content = f"""
+Results for {num_features} features:
+Best parameters: {best_params}
+Permutation Feature Importances:
+{feature_importance_df.to_string()}
+Accuracy on training data: {accuracy_train}
+F1-Score (weighted) on training data: {f1_train}
+Confusion Matrix (Train):
+{np.array2string(cm_train, separator=', ')}
+Classification Report (Train):
+{cr_train}
+Accuracy on validation data: {accuracy_valid}
+F1-Score (weighted) on validation data: {f1_valid}
+Confusion Matrix (Validation):
+{np.array2string(cm_valid, separator=', ')}
+Classification Report (Validation):
+{cr_valid}
+Accuracy on test data: {accuracy_test}
+F1-Score (weighted) on test data: {f1_test}
+Confusion Matrix (Test):
+{np.array2string(cm_test, separator=', ')}
+Classification Report (Test):
+{cr_test}
+"""
+    # First read existing content if file exists
+    try:
+        if os.path.exists(os.path.join(pathC, report)):
+            with open(os.path.join(pathC, report), 'r') as f:
+                existing_content = f.read()
+        else:
+            existing_content = ""
+    except:
+        existing_content = ""
+    
+    # Write complete content (existing + new)
+    try:
+        with open(os.path.join(pathC, report), 'w') as f:
+            f.write(existing_content + report_content)
+        logging.info(f"Report updated: {os.path.join(pathC, report)}")
+    except Exception as e:
+        logging.error(f"Could not write to {report}. Error: {str(e)}")
+        # Fallback: write to a different location
+        fallback_path = os.path.join('/dbfs/FileStore/SoilMapping/reports/', report)
+        os.makedirs(os.path.dirname(fallback_path), exist_ok=True)
+        with open(fallback_path, 'w') as f:
+            f.write(existing_content + report_content)
+        logging.info(f"Report written to fallback location: {fallback_path}")
     
     end = time.time()
     print(f"Time taken for {num_features} features: {convert(end - start)}")
@@ -215,16 +267,32 @@ def plot_metrics(feature_counts, accuracies_train, accuracies_valid, accuracies_
 
 if __name__ == "__main__":
     start = time.time()
-    pathC = '../classification/'  # Adjust path as needed
-    training_file = os.path.join(pathC, 'trainingSample.csv')
+    pathC = os.environ.get('CLASSIFICATION_DIR', '/dbfs/mnt/lab/unrestricted/KritiM/classification/')
+    training_file = os.environ.get('TRAINING_FILE', os.path.join(pathC, 'trainingSample.csv'))
     os.makedirs(pathC, exist_ok=True)
     
+    # Setup logging
+    log_file = setup_logging(pathC)
+    logging.info(f"Starting training script - Output directory: {pathC}")
+    import sklearn
+    logging.info(f"Python packages: xgboost {xgb.__version__}, sklearn {sklearn.__version__}, pandas {pd.__version__}")
+    logging.info(f"Initial memory usage: {get_memory_usage()}")
+    
     # Load data
-    print('load the labelled data....')
-    df = pd.read_csv(training_file)
-    # df = df.drop(columns=['Land_cover'], errors='ignore')
-    df = df.drop_duplicates()
-    df = df.dropna()
+    logging.info('Loading the labelled data...')
+    try:
+        df = pd.read_csv(training_file)
+        logging.info(f"Successfully loaded data from {training_file}")
+        logging.info(f"Initial dataframe shape: {df.shape}")
+        logging.info(f"Memory usage after load: {get_memory_usage()}")
+        
+        # df = df.drop(columns=['Land_cover'], errors='ignore')
+        df = df.drop_duplicates()
+        df = df.dropna()
+        logging.info(f"Shape after cleaning: {df.shape}")
+    except Exception as e:
+        logging.error(f"Error loading/cleaning data: {str(e)}")
+        raise
     
     # Prepare target and features
     df['target'] = df['target'].astype(int) - 1  # Shift to zero-based
@@ -289,7 +357,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(9, 14, 1)
+    feature_counts = range(9, 10, 1)
     results = []
     
     for k in feature_counts:
@@ -305,20 +373,32 @@ if __name__ == "__main__":
         # Train and evaluate
         model_name = f'model_{k}_features.joblib'
         report = f'report_{k}_features.txt'
-        acc_train, acc_valid, acc_test, f1_train, f1_valid, f1_test = train_and_evaluate(
-            X_train_subset, y_train, X_valid_subset, y_validate, X_test_subset, y_test, 
-            pathC, model_name, report, k
-        )
+        logging.info(f"\nTraining model with {k} features...")
+        logging.info(f"Memory before training: {get_memory_usage()}")
+        feature_train_start = time.time()
         
-        results.append({
-            'num_features': k,
-            'acc_train': acc_train,
-            'acc_valid': acc_valid,
-            'acc_test': acc_test,
-            'f1_train': f1_train,
-            'f1_valid': f1_valid,
-            'f1_test': f1_test
-        })
+        try:
+            acc_train, acc_valid, acc_test, f1_train, f1_valid, f1_test = train_and_evaluate(
+                X_train_subset, y_train, X_valid_subset, y_validate, X_test_subset, y_test, 
+                pathC, model_name, report, k
+            )
+            feature_time = convert(time.time() - feature_train_start)
+            logging.info(f"Training with {k} features completed in {feature_time}")
+            logging.info(f"Memory after training: {get_memory_usage()}")
+            
+            # Store results in a dictionary
+            result_entry = {}
+            result_entry['num_features'] = k
+            result_entry['acc_train'] = acc_train
+            result_entry['acc_valid'] = acc_valid
+            result_entry['acc_test'] = acc_test
+            result_entry['f1_train'] = f1_train
+            result_entry['f1_valid'] = f1_valid
+            result_entry['f1_test'] = f1_test
+            results.append(result_entry)
+        except Exception as e:
+            logging.error(f"Error training model with {k} features: {str(e)}")
+            raise
     
     # Save results
     results_df = pd.DataFrame(results)
@@ -338,4 +418,7 @@ if __name__ == "__main__":
     )
     end = time.time()
     time_taken = convert(end-start)
-    print(f'time taken for processing: {time_taken}')
+    logging.info(f"Total processing time: {time_taken}")
+    logging.info(f"Final memory usage: {get_memory_usage()}")
+    logging.info(f"Log file saved to: {log_file}")
+    print(f"\nScript completed successfully. Check the log file at: {log_file}")
