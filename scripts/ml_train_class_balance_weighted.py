@@ -5,27 +5,10 @@ Created on Thu Aug 14 13:42:04 2025
 @author: km000009
 """
 
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
-from sklearn.preprocessing import StandardScaler
-from sklearn.utils.class_weight import compute_class_weight
-from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, f1_score
-from sklearn.inspection import permutation_importance
-import xgboost as xgb
-import joblib
-import time
-import os
-import matplotlib.pyplot as plt
-import psutil
-import logging
-from datetime import datetime
+
 
 def get_memory_usage():
-    """Get current memory usage in GB"""
-    process = psutil.Process(os.getpid())
-    gb = process.memory_info().rss / 1024 / 1024 / 1024
-    return f"{gb:.2f}GB"
+    pass
 
 def setup_logging(pathC):
     """Setup logging to both file and console"""
