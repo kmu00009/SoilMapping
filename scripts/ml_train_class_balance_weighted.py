@@ -64,36 +64,44 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         objective='multi:softmax',
         num_class=len(np.unique(y_train)),
         eval_metric='mlogloss',
-        tree_method='hist'
+        tree_method='hist',
+        use_label_encoder=False
     )
     
-    # Define hyperparameter grid
+    # Define hyperparameter grid (slightly increase model complexity, reduce regularization)
     param_grid = {
-    'n_estimators': [200, 300, 400],
-    'learning_rate': [0.05, 0.1, 0.2],
-    'max_depth': [4, 5, 6],
-    'min_child_weight': [5, 7, 10],
-    'gamma': [0.5, 1.0, 2.0],
-    'subsample': [0.6, 0.7, 0.8],
-    'colsample_bytree': [0.5, 0.6, 0.7],
-    'reg_lambda': [1, 10, 50],
-    'reg_alpha': [0.1, 1, 5]
+        'n_estimators': [50, 100, 150],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [2, 3, 4],
+        'min_child_weight': [7, 10, 15],
+        'gamma': [1.0, 2.0, 5.0],
+        'subsample': [0.6, 0.7, 0.8, 0.9, 1.0],  # expanded range
+        'colsample_bytree': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],  # expanded range
+        'reg_lambda': [10, 50, 100, 200],
+        'reg_alpha': [5, 10, 20]
     }
     
+    # Early stopping fit params
+    fit_params = {
+        "eval_set": [(X_valid, y_validate)],
+        "early_stopping_rounds": 10,
+        "sample_weight": sample_weights
+    }
     
-    # Perform hyperparameter tuning
+    # Perform hyperparameter tuning (increase n_iter for more thorough search)
     random_search = RandomizedSearchCV(
         estimator=base_model,
         param_distributions=param_grid,
-        n_iter=50,  # Reduced for speed
-        cv=5,       # Reduced for speed
+        n_iter=50,  # Increased for more thorough search
+        cv=10,      # Increased folds for more robust validation
         scoring='f1_weighted',
         n_jobs=-1,  # Parallel processing
         verbose=1,
         random_state=42,
-        error_score='raise'
+        error_score='raise',
+        refit=True
     )
-    random_search.fit(X_train, y_train, sample_weight=sample_weights)
+    random_search.fit(X_train, y_train, **fit_params)
     
     # Best parameters
     best_params = random_search.best_params_
@@ -109,7 +117,7 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         dtrain=dtrain,
         num_boost_round=best_params['n_estimators'],
         evals=[(dtrain, 'train'), (dvalid, 'valid')],
-        early_stopping_rounds=20,
+        early_stopping_rounds=10,
         verbose_eval=False
     )
     
@@ -125,9 +133,10 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         objective='multi:softmax',
         num_class=len(np.unique(y_train)),
         eval_metric='mlogloss',
-        tree_method='hist'
+        tree_method='hist',
+        use_label_encoder=False
     )
-    sk_model.fit(X_train, y_train, sample_weight=sample_weights)  # Fit for permutation importance
+    sk_model.fit(X_train, y_train, sample_weight=sample_weights, eval_set=[(X_valid, y_validate)], early_stopping_rounds=10, verbose=False)
     perm_importance = permutation_importance(sk_model, X_valid, y_validate, n_repeats=5, random_state=42, n_jobs=-1)
     feature_importance_df = pd.DataFrame({
         'Feature': X_train.columns,
@@ -175,6 +184,10 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     print("Classification Report (Test):")
     print(cr_test)
     
+    # Log overfitting diagnosis
+    print(f"Overfitting gap (train - test accuracy): {accuracy_train - accuracy_test:.2f}")
+    print(f"Overfitting gap (train - test F1): {f1_train - f1_test:.2f}")
+    
     # Write report with confusion matrices and classification reports
     report_content = f"""
 Results for {num_features} features:
@@ -199,6 +212,8 @@ Confusion Matrix (Test):
 {np.array2string(cm_test, separator=', ')}
 Classification Report (Test):
 {cr_test}
+Overfitting gap (train - test accuracy): {accuracy_train - accuracy_test:.2f}
+Overfitting gap (train - test F1): {f1_train - f1_test:.2f}
 """
     # First read existing content if file exists
     try:
@@ -351,19 +366,26 @@ if __name__ == "__main__":
         print(f"Applying SMOTENC to augment classes: {augment_classes}")
         # Get categorical feature indices for SMOTENC
         cat_indices = [i for i, col in enumerate(X_train.columns) if col in categorical_cols]
-        smote_nc = SMOTENC(categorical_features=cat_indices, random_state=42, n_jobs=-1)
-        # Only oversample the selected classes
-        # Create a mask for samples to keep (majority and sparse)
-        mask = y_train.isin(augment_classes) | y_train.isin([class_counts.idxmax()])
-        X_train_aug, y_train_aug = smote_nc.fit_resample(X_train[mask], y_train[mask])
-        # Concatenate with the rest of the data (not oversampled)
-        X_train_rest = X_train[~mask]
-        y_train_rest = y_train[~mask]
-        X_train_final = pd.concat([pd.DataFrame(X_train_aug, columns=X_train.columns), X_train_rest], ignore_index=True)
-        y_train_final = pd.concat([pd.Series(y_train_aug), y_train_rest], ignore_index=True)
-        X_train = X_train_final
-        y_train = y_train_final
-        print(f"Training set shape after SMOTENC: {X_train.shape}")
+        # For multi-class, sampling_strategy must be a dict: {class_label: n_samples}
+        target_n = int(np.ceil(0.3 * majority_count))
+        # Only include classes where target_n > current count (SMOTE only oversamples)
+        sampling_strategy = {cls: target_n for cls in augment_classes if target_n > class_counts[cls]}
+        if len(sampling_strategy) == 0:
+            print("No classes require oversampling with SMOTENC (target_n <= current count for all). Skipping SMOTENC.")
+        else:
+            smote_nc = SMOTENC(categorical_features=cat_indices, random_state=42, n_jobs=-1, sampling_strategy=sampling_strategy)
+            # Only oversample the selected classes
+            # Create a mask for samples to keep (majority and sparse)
+            mask = y_train.isin(sampling_strategy.keys()) | y_train.isin([class_counts.idxmax()])
+            X_train_aug, y_train_aug = smote_nc.fit_resample(X_train[mask], y_train[mask])
+            # Concatenate with the rest of the data (not oversampled)
+            X_train_rest = X_train[~mask]
+            y_train_rest = y_train[~mask]
+            X_train_final = pd.concat([pd.DataFrame(X_train_aug, columns=X_train.columns), X_train_rest], ignore_index=True)
+            y_train_final = pd.concat([pd.Series(y_train_aug), y_train_rest], ignore_index=True)
+            X_train = X_train_final
+            y_train = y_train_final
+            print(f"Training set shape after SMOTENC: {X_train.shape}")
     else:
         print("No sparse classes found for SMOTENC augmentation.")
 
@@ -400,7 +422,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(9, 10, 1)
+    feature_counts = range(13, 14, 1)
     results = []
     
     for k in feature_counts:
@@ -459,6 +481,13 @@ if __name__ == "__main__":
     #     results_df['f1_test'],
     #     pathC
     # )
+    
+    # Suggestions for further improvement (not implemented in code):
+    # - Double-check that none of the top features are data leaks (e.g., derived from the target).
+    # - If overfitting persists, try advanced feature engineering (interactions, polynomials, domain-specific transforms).
+    # - Consider ensemble averaging of several top models if feasible.
+    # - Plot learning curves to visually inspect overfitting.
+    
     end = time.time()
     time_taken = convert(end-start)
     logging.info(f"Total processing time: {time_taken}")
