@@ -1,10 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Aug 14 13:42:04 2025
-
-@author: km000009
-"""
-
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
@@ -20,6 +14,7 @@ import matplotlib.pyplot as plt
 import psutil
 import logging
 from datetime import datetime
+from pathlib import Path
 
 def get_memory_usage():
     """Get current memory usage in GB"""
@@ -270,7 +265,19 @@ if __name__ == "__main__":
     pathC = os.environ.get('CLASSIFICATION_DIR', '/dbfs/mnt/lab/unrestricted/KritiM/classification/')
     training_file = os.environ.get('TRAINING_FILE', os.path.join(pathC, 'trainingSample.csv'))
     os.makedirs(pathC, exist_ok=True)
-    
+
+    # Delete all files in pathC except the training file
+    # Convert to dbfs:/ path for dbutils.fs
+    dbfs_pathC = pathC.replace('/dbfs', 'dbfs:') if pathC.startswith('/dbfs') else pathC
+    keep_file = Path(training_file).name
+    try:
+        files = dbutils.fs.ls(dbfs_pathC)
+        for f in files:
+            if f.name != keep_file:
+                dbutils.fs.rm(f.path, True)
+    except Exception as e:
+        print(f"Warning: Could not clean directory {dbfs_pathC}. Error: {e}")
+
     # Setup logging
     log_file = setup_logging(pathC)
     logging.info(f"Starting training script - Output directory: {pathC}")
@@ -316,14 +323,50 @@ if __name__ == "__main__":
     
     # Split data
     train, validate, test = split_data(df)
-    
+
     X_train = train.drop('target', axis=1)
     y_train = train['target']
     X_valid = validate.drop('target', axis=1)
     y_validate = validate['target']
     X_test = test.drop('target', axis=1)
     y_test = test['target']
-    
+
+    # --- SMOTENC augmentation for sparse/low-F1 classes ---
+    try:
+        from imblearn.over_sampling import SMOTENC
+    except ImportError:
+        import sys
+        !{sys.executable} -m pip install imbalanced-learn
+        from imblearn.over_sampling import SMOTENC
+
+    # Identify sparse classes (<50% of majority class)
+    class_counts = y_train.value_counts()
+    majority_count = class_counts.max()
+    sparse_classes = class_counts[class_counts < 0.5 * majority_count].index.tolist()
+
+    # (Optional) Identify classes with F1 < 0.5 (if available from previous runs)
+    # For now, only use sparse_classes as F1s are not available at this stage
+    augment_classes = set(sparse_classes)
+    if len(augment_classes) > 0:
+        print(f"Applying SMOTENC to augment classes: {augment_classes}")
+        # Get categorical feature indices for SMOTENC
+        cat_indices = [i for i, col in enumerate(X_train.columns) if col in categorical_cols]
+        smote_nc = SMOTENC(categorical_features=cat_indices, random_state=42, n_jobs=-1)
+        # Only oversample the selected classes
+        # Create a mask for samples to keep (majority and sparse)
+        mask = y_train.isin(augment_classes) | y_train.isin([class_counts.idxmax()])
+        X_train_aug, y_train_aug = smote_nc.fit_resample(X_train[mask], y_train[mask])
+        # Concatenate with the rest of the data (not oversampled)
+        X_train_rest = X_train[~mask]
+        y_train_rest = y_train[~mask]
+        X_train_final = pd.concat([pd.DataFrame(X_train_aug, columns=X_train.columns), X_train_rest], ignore_index=True)
+        y_train_final = pd.concat([pd.Series(y_train_aug), y_train_rest], ignore_index=True)
+        X_train = X_train_final
+        y_train = y_train_final
+        print(f"Training set shape after SMOTENC: {X_train.shape}")
+    else:
+        print("No sparse classes found for SMOTENC augmentation.")
+
     # Scale numerical columns
     num_cols = [col for col in X_train.columns if col not in categorical_cols]
     scaler = StandardScaler()
@@ -406,16 +449,16 @@ if __name__ == "__main__":
     print(f"Results saved to {os.path.join(pathC, 'metrics_vs_features.csv')}")
     
     # Plot metrics
-    plot_metrics(
-        results_df['num_features'],
-        results_df['acc_train'],
-        results_df['acc_valid'],
-        results_df['acc_test'],
-        results_df['f1_train'],
-        results_df['f1_valid'],
-        results_df['f1_test'],
-        pathC
-    )
+    # plot_metrics(
+    #     results_df['num_features'],
+    #     results_df['acc_train'],
+    #     results_df['acc_valid'],
+    #     results_df['acc_test'],
+    #     results_df['f1_train'],
+    #     results_df['f1_valid'],
+    #     results_df['f1_test'],
+    #     pathC
+    # )
     end = time.time()
     time_taken = convert(end-start)
     logging.info(f"Total processing time: {time_taken}")
