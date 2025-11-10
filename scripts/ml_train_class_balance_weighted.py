@@ -299,12 +299,12 @@ if __name__ == "__main__":
     print("Class distribution:")
     print(df['target'].value_counts(normalize=True))
     
-    print('assign categorical and numerical columns...')
-    categorical_cols = ['Land_cover', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
-                        'Aggregate_texture', 'Aquifers', 'bedrock']
-    for col in categorical_cols:
-        if col in df.columns:
-            df[col] = df[col].astype('category')
+    # print('assign categorical and numerical columns...')
+    # categorical_cols = ['Land_cover', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
+    #                     'Aggregate_texture', 'Aquifers', 'bedrock']
+    # for col in categorical_cols:
+    #     if col in df.columns:
+    #         df[col] = df[col].astype('category')
     
     # Downcast numerical columns
     for col in df.select_dtypes(include='number').columns:
@@ -325,7 +325,8 @@ if __name__ == "__main__":
     y_test = test['target']
     
     # Scale numerical columns
-    num_cols = [col for col in X_train.columns if col not in categorical_cols]
+    # num_cols = [col for col in X_train.columns if col not in categorical_cols]
+    num_cols = [col for col in X_train.columns]
     scaler = StandardScaler()
     X_train[num_cols] = scaler.fit_transform(X_train[num_cols])
     X_valid[num_cols] = scaler.transform(X_valid[num_cols])
@@ -406,16 +407,16 @@ if __name__ == "__main__":
     print(f"Results saved to {os.path.join(pathC, 'metrics_vs_features.csv')}")
     
     # Plot metrics
-    plot_metrics(
-        results_df['num_features'],
-        results_df['acc_train'],
-        results_df['acc_valid'],
-        results_df['acc_test'],
-        results_df['f1_train'],
-        results_df['f1_valid'],
-        results_df['f1_test'],
-        pathC
-    )
+    # plot_metrics(
+    #     results_df['num_features'],
+    #     results_df['acc_train'],
+    #     results_df['acc_valid'],
+    #     results_df['acc_test'],
+    #     results_df['f1_train'],
+    #     results_df['f1_valid'],
+    #     results_df['f1_test'],
+    #     pathC
+    # )
     end = time.time()
     time_taken = convert(end-start)
     logging.info(f"Total processing time: {time_taken}")
