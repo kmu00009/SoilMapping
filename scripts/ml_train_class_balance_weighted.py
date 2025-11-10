@@ -7,7 +7,7 @@ Created on Thu Aug 14 13:42:04 2025
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report, f1_score
@@ -69,36 +69,46 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         objective='multi:softmax',
         num_class=len(np.unique(y_train)),
         eval_metric='mlogloss',
-        tree_method='hist'
+        tree_method='hist',
+        use_label_encoder=False,
+        early_stopping_rounds=10
     )
     
-    # Define hyperparameter grid
+    # Expanded hyperparameter grid for stronger regularization and lower complexity
     param_grid = {
-    'n_estimators': [200, 300, 400],
-    'learning_rate': [0.05, 0.1, 0.2],
-    'max_depth': [4, 5, 6],
-    'min_child_weight': [5, 7, 10],
-    'gamma': [0.5, 1.0, 2.0],
-    'subsample': [0.6, 0.7, 0.8],
-    'colsample_bytree': [0.5, 0.6, 0.7],
-    'reg_lambda': [1, 10, 50],
-    'reg_alpha': [0.1, 1, 5]
+        'n_estimators': [100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [2, 3, 4],
+        'min_child_weight': [10, 20, 30],
+        'gamma': [0.5, 1.0, 2.0],
+        'subsample': [0.4, 0.5, 0.6],
+        'colsample_bytree': [0.4, 0.5, 0.6],
+        'reg_lambda': [10, 50, 100, 200, 500],
+        'reg_alpha': [1, 5, 10, 20, 50],
+        'max_delta_step': [0, 1, 2]
+        # 'scale_pos_weight' removed
     }
     
+    # StratifiedKFold for robust cross-validation
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     
-    # Perform hyperparameter tuning
+    # Perform hyperparameter tuning (early_stopping_rounds now in constructor)
     random_search = RandomizedSearchCV(
         estimator=base_model,
         param_distributions=param_grid,
-        n_iter=50,  # Reduced for speed
-        cv=5,       # Reduced for speed
+        n_iter=60,  # Slightly increased for more coverage
+        cv=cv,
         scoring='f1_weighted',
-        n_jobs=-1,  # Parallel processing
+        n_jobs=-1,
         verbose=1,
         random_state=42,
-        error_score='raise'
+        error_score='raise',
+        refit=True,
+        return_train_score=True
     )
-    random_search.fit(X_train, y_train, sample_weight=sample_weights)
+    random_search.fit(X_train, y_train, sample_weight=sample_weights, 
+                     eval_set=[(X_valid, y_validate)],
+                     verbose=False)
     
     # Best parameters
     best_params = random_search.best_params_
@@ -114,15 +124,11 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         dtrain=dtrain,
         num_boost_round=best_params['n_estimators'],
         evals=[(dtrain, 'train'), (dvalid, 'valid')],
-        early_stopping_rounds=20,
+        early_stopping_rounds=10,
         verbose_eval=False
     )
     
-    # Save the model
-    joblib.dump(model, os.path.join(pathC, model_name))
-    print(f"Model with {num_features} features saved to {os.path.join(pathC, model_name)}")
-    
-    # Feature importances (permutation importance using scikit-learn wrapper for consistency)
+    # Cross-validation evaluation for final model
     sk_model = xgb.XGBClassifier(
         **best_params,
         random_state=42,
@@ -130,8 +136,18 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         objective='multi:softmax',
         num_class=len(np.unique(y_train)),
         eval_metric='mlogloss',
-        tree_method='hist'
+        tree_method='hist',
+        use_label_encoder=False,
+        early_stopping_rounds=10
     )
+    cv_scores = cross_val_score(sk_model, X_train, y_train, cv=5, scoring='f1_weighted', n_jobs=-1)
+    print(f"Cross-validated F1 (weighted) on training set: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}")
+    
+    # Save the model
+    joblib.dump(model, os.path.join(pathC, model_name))
+    print(f"Model with {num_features} features saved to {os.path.join(pathC, model_name)}")
+    
+    # Feature importances (permutation importance using scikit-learn wrapper for consistency)
     sk_model.fit(X_train, y_train, sample_weight=sample_weights)  # Fit for permutation importance
     perm_importance = permutation_importance(sk_model, X_valid, y_validate, n_repeats=5, random_state=42, n_jobs=-1)
     feature_importance_df = pd.DataFrame({
@@ -184,6 +200,7 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     report_content = f"""
 Results for {num_features} features:
 Best parameters: {best_params}
+Cross-validated F1 (weighted) on training set: {cv_scores.mean():.3f} ± {cv_scores.std():.3f}
 Permutation Feature Importances:
 {feature_importance_df.to_string()}
 Accuracy on training data: {accuracy_train}
@@ -228,6 +245,30 @@ Classification Report (Test):
         with open(fallback_path, 'w') as f:
             f.write(existing_content + report_content)
         logging.info(f"Report written to fallback location: {fallback_path}")
+    
+    # Plot learning curve
+    if hasattr(random_search, 'cv_results_'):
+        plt.figure(figsize=(8, 5))
+        plt.plot(random_search.cv_results_['mean_train_score'], label='Mean Train F1')
+        plt.plot(random_search.cv_results_['mean_test_score'], label='Mean CV F1')
+        plt.xlabel('Iteration')
+        plt.ylabel('F1 Score')
+        plt.title(f'Learning Curve ({num_features} features)')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(pathC, f'learning_curve_{num_features}_features.png'))
+        plt.close()
+    
+    # Plot confusion matrices
+    for split, cm in zip(['train', 'valid', 'test'], [cm_train, cm_valid, cm_test]):
+        plt.figure(figsize=(6, 5))
+        plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+        plt.title(f'Confusion Matrix ({split}, {num_features} features)')
+        plt.colorbar()
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+        plt.savefig(os.path.join(pathC, f'confusion_matrix_{split}_{num_features}_features.png'))
+        plt.close()
     
     end = time.time()
     print(f"Time taken for {num_features} features: {convert(end - start)}")
@@ -286,7 +327,6 @@ if __name__ == "__main__":
         logging.info(f"Initial dataframe shape: {df.shape}")
         logging.info(f"Memory usage after load: {get_memory_usage()}")
         
-        # df = df.drop(columns=['Land_cover'], errors='ignore')
         df = df.drop_duplicates()
         df = df.dropna()
         logging.info(f"Shape after cleaning: {df.shape}")
@@ -298,13 +338,6 @@ if __name__ == "__main__":
     df['target'] = df['target'].astype(int) - 1  # Shift to zero-based
     print("Class distribution:")
     print(df['target'].value_counts(normalize=True))
-    
-    # print('assign categorical and numerical columns...')
-    # categorical_cols = ['Land_cover', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
-    #                     'Aggregate_texture', 'Aquifers', 'bedrock']
-    # for col in categorical_cols:
-    #     if col in df.columns:
-    #         df[col] = df[col].astype('category')
     
     # Downcast numerical columns
     for col in df.select_dtypes(include='number').columns:
@@ -324,8 +357,7 @@ if __name__ == "__main__":
     X_test = test.drop('target', axis=1)
     y_test = test['target']
     
-    # Scale numerical columns
-    # num_cols = [col for col in X_train.columns if col not in categorical_cols]
+    # Fit scaler only on training data
     num_cols = [col for col in X_train.columns]
     scaler = StandardScaler()
     X_train[num_cols] = scaler.fit_transform(X_train[num_cols])
@@ -335,35 +367,24 @@ if __name__ == "__main__":
     # Save scaler
     joblib.dump(scaler, os.path.join(pathC, 'scaler.joblib'))
     
-    # Train initial model to get feature importances
+    # Feature selection: fit on training only, apply to valid/test
     initial_model = xgb.XGBClassifier(
         random_state=42, enable_categorical=True, objective='multi:softmax',
-        num_class=len(np.unique(y_train)), eval_metric='mlogloss', tree_method='hist'
+        num_class=len(np.unique(y_train)), eval_metric='mlogloss', tree_method='hist', use_label_encoder=False
     )
-    param_grid = {
-        'n_estimators': [100, 200, 300],
-        'learning_rate': [0.01, 0.05, 0.1],
-        'max_depth': [3, 4, 5]
-    }
-    random_search = RandomizedSearchCV(
-        initial_model, param_grid, n_iter=20, cv=3, scoring='f1_weighted',
-        n_jobs=-1, random_state=42
-    )
-    random_search.fit(X_train, y_train, sample_weight=compute_class_weights(y_train))
-    initial_model = random_search.best_estimator_
-    perm_importance = permutation_importance(initial_model, X_valid, y_validate, n_repeats=3, random_state=42, n_jobs=-1)
+    initial_model.fit(X_train, y_train, sample_weight=compute_class_weights(y_train))
+    perm_importance = permutation_importance(initial_model, X_train, y_train, n_repeats=3, random_state=42, n_jobs=-1)
     feature_importance_df = pd.DataFrame({
         'Feature': X_train.columns,
         'Importance': perm_importance.importances_mean
     }).sort_values(by='Importance', ascending=False)
     
-    # Select features incrementally
-    feature_counts = range(9, 10, 1)
+    # Select features incrementally (try fewer features to reduce overfitting)
+    feature_counts = [5, 8, 10, 13]
     results = []
     
     for k in feature_counts:
         print(f"\nTraining with top {k} features...")
-        # Select top k features based on permutation importance
         selected_features = feature_importance_df['Feature'].head(k).values
         
         # Subset data
