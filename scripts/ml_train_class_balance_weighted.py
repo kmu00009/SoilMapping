@@ -300,8 +300,8 @@ if __name__ == "__main__":
     print(df['target'].value_counts(normalize=True))
     
     print('assign categorical and numerical columns...')
-    categorical_cols = ['Land_cover', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
-                        'Aggregate_texture', 'Aquifers', 'bedrock']
+    categorical_cols = ['Landcover_LE', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
+                        'Aggregate_texture', 'Aquifers', 'bedrock_raster_50m', 'ALC_old']
     for col in categorical_cols:
         if col in df.columns:
             df[col] = df[col].astype('category')
@@ -357,7 +357,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(9, 10, 1)
+    feature_counts = range(7, 15, 1)
     results = []
     
     for k in feature_counts:
