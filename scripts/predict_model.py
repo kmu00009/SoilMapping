@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Mon Sep 15 10:25:31 2025
+Created on Mon Nov 24 16:05:31 2025
 
 @author: kriti.mukherjee
 """
@@ -16,329 +16,371 @@ import numpy as np
 import rasterio as rio
 import argparse
 from pathlib import Path
-from predictFunctions import split_dataframe, predictClass, extract_index
+from rasterio.merge import merge
+import re  # For extract_index
+import lightgbm as lgb  # For LightGBM model
+import logging  # For logging
+import uuid  # For generating unique temporary file names
+
+# Set up logging to output to console at INFO level
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+logger = logging.getLogger(__name__)
 
 def convert(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
 def clear_directory(directory):
-    """
-    Remove all files and subdirectories within the specified directory.
-    """
     directory = Path(directory)
     if not directory.exists():
-        print(f"Directory {directory} does not exist.")
+        logger.info(f"Directory {directory} does not exist.")
         return
     if not directory.is_dir():
-        print(f"{directory} is not a directory.")
+        logger.info(f"{directory} is not a directory.")
         return
     for item in directory.iterdir():
         try:
             if item.is_file():
                 item.unlink()
-                print(f"Removed file: {item}")
+                logger.info(f"Removed file: {item}")
             elif item.is_dir():
                 shutil.rmtree(item)
-                print(f"Removed directory: {item}")
+                logger.info(f"Removed directory: {item}")
         except Exception as e:
-            print(f"Error removing {item}: {e}")
+            logger.error(f"Error removing {item}: {e}")
 
 def get_model_feature_names(model_path):
-    """
-    Extract feature names from an XGBoost model saved in a .joblib file.
-    
-    Args:
-        model_path (str): Path to the model .joblib file.
-    
-    Returns:
-        list: List of feature names used by the model, or None if not available.
-    """
     try:
         model = joblib.load(model_path)
-        if hasattr(model, 'feature_names'):
-            return model.feature_names
-        elif hasattr(model, 'get_booster'):
-            return model.get_booster().feature_names
+        # For LightGBM scikit-learn API
+        if hasattr(model, 'feature_name_'):
+            return list(model.feature_name_)
+        # For LightGBM native Booster
+        elif hasattr(model, 'booster_') and hasattr(model.booster_, 'feature_name'):
+            return list(model.booster_.feature_name())
+        # For scikit-learn
+        elif hasattr(model, 'feature_names_in_'):
+            return list(model.feature_names_in_)
         else:
-            print("Model does not have feature_names attribute.")
+            logger.info("Model does not have feature_names attribute.")
             return None
     except Exception as e:
-        print(f"Error loading model or extracting feature names: {e}")
+        logger.error(f"Error loading model or extracting feature names: {e}")
         return None
 
-def predict(grid):
-    # Load the pre-trained model and scaler
+def extract_index(filename):
+    match = re.search(r'class_(\d+)\.csv', filename)
+    return int(match.group(1)) if match else -1
+
+def split_dataframe(df, chunk_size):
+    return [df.iloc[i:i + chunk_size] for i in range(0, df.shape[0], chunk_size)]
+
+def align_features_for_scaler(df, scaler_feature_names):
+    # Add missing columns as NaN
+    for col in scaler_feature_names:
+        if col not in df.columns:
+            df[col] = np.nan
+    # Remove extra columns
+    df = df[scaler_feature_names]
+    return df
+
+def predictClass(infile, outpath, i, classifier, scaler, model_feature_names):
     try:
-        model_path = 'classification/model_9_features.joblib'
-        scaler_path = 'classification/scaler.joblib'
-        best_model = joblib.load(model_path)
-        scaler = joblib.load(scaler_path)
-        scaler_feature_names = scaler.feature_names_in_.tolist()
-        print(f"Scaler feature names (full numerical): {scaler_feature_names}")
-        model_feature_names = get_model_feature_names(model_path)
-        if model_feature_names is None:
-            print("Falling back to scaler feature names for model.")
-            model_feature_names = scaler_feature_names
-        print(f"Model feature names (subset): {model_feature_names}")
+        df = pd.read_csv(infile)
+        msg = f"Processing chunk {i}"
+        print(msg)
+        logger.info(msg)
+        nan_mask = df.isna().any(axis=1)
+        df_filled = df.fillna(0)
+        # Debug: print model features and DataFrame columns
+        print(f"DEBUG: Model expects features: {model_feature_names}")
+        print(f"DEBUG: DataFrame columns: {df_filled.columns.tolist()}")
+        logger.info(f"Model expects features: {model_feature_names}")
+        logger.info(f"Prediction DataFrame columns: {df_filled.columns.tolist()}")
+        # Print model n_features_in_ if available
+        if hasattr(classifier, 'n_features_in_'):
+            print(f"DEBUG: Model n_features_in_: {classifier.n_features_in_}")
+            logger.info(f"Model n_features_in_: {classifier.n_features_in_}")
+        # Fail-fast: Only proceed if columns match exactly (names and order)
+        if list(df_filled.columns) != list(model_feature_names):
+            logger.error(f"Column mismatch: Model expects {model_feature_names}, got {df_filled.columns.tolist()}")
+            print(f"ERROR: Column mismatch: Model expects {model_feature_names}, got {df_filled.columns.tolist()}")
+            return  # Skip this chunk
+        if hasattr(classifier, 'n_features_in_') and len(model_feature_names) != classifier.n_features_in_:
+            logger.error(f"Model expects {classifier.n_features_in_} features, but model_feature_names has {len(model_feature_names)} features.")
+            print(f"ERROR: Model expects {classifier.n_features_in_} features, but model_feature_names has {len(model_feature_names)} features.")
+            return
+        df_pred = df_filled[model_feature_names]
+        logger.info(f"Columns in df_pred: {df_pred.columns.tolist()}")
+        class_values = classifier.predict(df_pred)
+        if hasattr(classifier, 'predict_proba'):
+            prob_values = classifier.predict_proba(df_pred)
+            confidence_values = np.max(prob_values, axis=1)
+        else:
+            prob_values = classifier.predict(df_pred)
+            if prob_values.ndim == 1:
+                confidence_values = prob_values
+                class_values = (prob_values > 0.5).astype(int)
+            else:
+                confidence_values = np.max(prob_values, axis=1)
+        msg = f"Chunk {i} confidence range: {confidence_values.min():.3f} to {confidence_values.max():.3f}"
+        print(msg)
+        logger.info(msg)
+        # Add 1 to class if needed (for 1-based class)
+        class_values = class_values + 1
+        # Convert class_values to float to allow np.nan assignment
+        class_values = class_values.astype(float)
+        # Set nan where original data was nan
+        class_values[nan_mask] = np.nan
+        confidence_values[nan_mask] = np.nan
+        output_file = os.path.join(outpath, f'class_{i}.csv')
+        df_filled['Class'] = class_values
+        df_filled['Confidence'] = confidence_values
+        df_filled.loc[nan_mask, ['Class', 'Confidence']] = np.nan
+        df_filled.to_csv(output_file, index=False)
+        msg = f"Saved predictions to {output_file}"
+        print(msg)
+        logger.info(msg)
     except Exception as e:
-        print(f"Error loading model or scaler: {e}")
+        msg = f"An error occurred: {e}"
+        print(msg)
+        logger.error(msg)
         raise
-    
-    # Define categorical columns
+
+def mosaic_rasters(input_files, output_file, nodata_value=-9999):
+    import shutil
+    import uuid
+    src_files_to_mosaic = []
+    for fp in input_files:
+        src = rio.open(fp)
+        src_files_to_mosaic.append(src)
+    if not src_files_to_mosaic:
+        logger.warning(f"No input files found for {output_file}, skipping.")
+        return
+    mosaic, out_trans = merge(src_files_to_mosaic, nodata=nodata_value)
+    out_meta = src_files_to_mosaic[0].meta.copy()
+    out_meta.update({
+        "driver": "GTiff",
+        "height": mosaic.shape[1],
+        "width": mosaic.shape[2],
+        "transform": out_trans,
+        "nodata": nodata_value,
+        "count": 1
+    })
+    # Write to /tmp first, then copy to DBFS
+    tmp_mosaic_path = f"/tmp/mosaic_{uuid.uuid4().hex}.tif"
+    with rio.open(tmp_mosaic_path, "w", **out_meta) as dest:
+        dest.write(mosaic[0], 1)
+    shutil.copy(tmp_mosaic_path, output_file)
+    os.remove(tmp_mosaic_path)
+    for src in src_files_to_mosaic:
+        src.close()
+    logger.info(f"Mosaic written to {output_file}")
+
+def main():
+    start = time.time()
+    pathC = Path(os.environ.get('CLASSIFICATION_DIR', '/dbfs/mnt/lab/unrestricted/KritiM/classification/'))
+    training_file = Path(os.environ.get('TRAINING_FILE', str(pathC / 'trainingSample.csv')))
+    model_path = Path(os.environ.get('MODEL_PATH', str(pathC / 'model_9_features.joblib')))
+    scaler_path = Path(os.environ.get('SCALER_PATH', str(pathC / 'scaler.joblib')))
+    best_model = joblib.load(model_path)
+    scaler = joblib.load(scaler_path)
+    scaler_feature_names = scaler.feature_names_in_.tolist()
+    model_feature_names = get_model_feature_names(model_path)
+    if model_feature_names is None:
+        logger.info("Falling back to scaler feature names for model.")
+        model_feature_names = scaler_feature_names
     categorical_cols = ['Landcover_LE', 'Profile_depth', 'CaCO3_rank', 'Texture_group', 
                         'Aggregate_texture', 'Aquifers', 'bedrock_raster_50m', 'ALC_old']
-    
-    # Prepare data for classification
-    dftrain = pd.read_csv('classification/trainingSample.csv')
+    dftrain = pd.read_csv(training_file)
     mode_values = {col: dftrain[col].mode()[0] for col in categorical_cols if col in dftrain.columns}
     mean_values = dftrain.select_dtypes(include='number').mean()
     traincols = dftrain.columns.tolist()
-    pathtogrids = Path('../../Data/predictData/cofactors_used/GRID/')
+    pathtogrids = Path('/dbfs/mnt/lab/unrestricted/KritiM/GRID')
+    if not pathtogrids.exists() or not pathtogrids.is_dir():
+        logger.error(f"Directory {pathtogrids} does not exist. Please check the path or create the directory and try again.")
+        print(f"ERROR: Directory {pathtogrids} does not exist. Please check the path or create the directory and try again.")
+        return
     subdirectories = [subdir for subdir in pathtogrids.iterdir() if subdir.is_dir()]
     subdirectories.sort()
-    
-    df = pd.DataFrame()
-    for folder in subdirectories:
-        print(f'Working on folder: {folder}')
-        files = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
-        if not files:
-            print(f"No files found for grid {grid} in {folder}")
+    outdir = Path('/dbfs/mnt/lab/unrestricted/KritiM/') / 'Table'
+    outdir.mkdir(parents=True, exist_ok=True)
+    predict_dir = Path('/dbfs/mnt/lab/unrestricted/KritiM/Predict')
+    predict_dir.mkdir(parents=True, exist_ok=True)
+    pathraster = pathtogrids / 'AAR'
+    files = list(pathraster.glob('*.tif'))
+
+    # --- NEW: Collect all possible variable names from all grids ---
+    all_possible_vars = set()
+    for file in files:
+        grid = file.name[:5]
+        for folder in subdirectories:
+            files_grid = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
+            for file_grid in files_grid:
+                var = file_grid.name[6:-4]
+                all_possible_vars.add(var)
+    all_possible_vars = sorted(list(all_possible_vars))
+    # Add EAST and NORTH as they are always present
+    all_possible_vars = ['EAST', 'NORTH'] + [v for v in all_possible_vars if v not in ['EAST', 'NORTH']]
+    logger.info(f"All possible variables (columns) from GRID: {all_possible_vars}")
+
+    nodata_value = -9999.0  # Use a finite float for nodata
+    class_raster_files = []
+    conf_raster_files = []
+    for file in files:
+        grid = file.name[:5]
+        csv_path = outdir / (grid + '.csv')
+        class_raster_path = predict_dir / f'{grid}_class.tif'
+        conf_raster_path = predict_dir / f'{grid}_conf.tif'
+        # Skip processing if all files exist
+        if csv_path.exists() and class_raster_path.exists() and conf_raster_path.exists():
+            logger.info(f"Skipping grid {grid}: CSV and both rasters already exist.")
+            class_raster_files.append(str(class_raster_path))
+            conf_raster_files.append(str(conf_raster_path))
             continue
-        for file in files:
-            grid_name = file.name[:5]
-            var = file.name[6:-4]
-            print(f"Processing file: {file.name}, Grid: {grid_name}, Variable: {var}")
-            with rio.open(file, 'r') as src:
-                data = src.read(1).ravel()
-                if 'EAST' not in df.columns:
-                    rows, cols = np.meshgrid(
-                        np.arange(src.height),
-                        np.arange(src.width),
-                        indexing="ij"
-                    )
-                    xs, ys = rio.transform.xy(src.transform, rows, cols)
-                    df['EAST'] = np.array(xs).ravel()
-                    df['NORTH'] = np.array(ys).ravel()
-                df[var] = data
-                
-    print(f'Created dataframe for {grid}...')
-    print("Dataframe columns:", df.columns.tolist())
-    
-    # Check for missing features
-    expected_features = scaler_feature_names + [col for col in categorical_cols if col in df.columns]
-    missing_features = [col for col in expected_features if col not in df.columns]
-    if missing_features:
-        print(f"Error: Missing features for grid {grid}: {missing_features}")
-        return
-    
-    # Write dataframe to CSV
-    outpath = Path('../../Data/predictData/cofactors_used')
-    outdir = outpath / 'Table'
-    
-    try:
-        outdir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        print(f"Failed to create directory {outdir}: {e}")
-        raise
-    df.to_csv(outdir / (grid + '.csv'), index=False)
-    
-    # Read one of the raster grid files for profile information
-    pathraster = Path('../../Data/predictData/cofactors_used/GRID/AAR')
-    raster = f"{grid}_AAR.tif"
-    try:
-        with rio.open(os.path.join(pathraster, raster), 'r') as src:
-            profile = src.profile
-            profile.update(count=1)
-            band = src.read(1)
-            nodata_value = src.nodatavals[0] if src.nodatavals else -9999
-    except Exception as e:
-        print(f"Error reading raster file: {e}")
-        raise
-    
-    # Read the dataframe for prediction
-    pathdata = Path('../../Data/predictData/cofactors_used/Table')
-    df = pd.read_csv(pathdata / f"{grid}.csv")
-    df = df.replace(nodata_value, np.nan)
-    
-    for col in categorical_cols:
-        if col in df.columns:
-            df[col] = df[col].astype('category')
-            
-    # Check for valid rows
-    print(f"Total rows in df: {len(df)}")
-    valid_mask = df.notna().all(axis=1)
-    print(f"Valid rows (no NaNs): {valid_mask.sum()}")
-    print("NaN counts per column:")
-    print(df.isna().sum())
-    df_valid = df[valid_mask].copy()
-    
-    if df_valid.empty:
-        print(f"No valid data (all rows contain NaNs) for grid {grid}. Skipping prediction.")
-        return
-    
-    # Downcast numerical columns
-    for col in df_valid.select_dtypes(include='number').columns:
-        df_valid[col] = pd.to_numeric(df_valid[col], downcast='float')
-    print("Columns in df_valid:", df_valid.columns.tolist())
-    
-    # Scale numerical columns
-    num_cols = [col for col in scaler_feature_names if col not in categorical_cols]
-    try:
-        print('Scaling the prediction dataframe...')
-        df_num_scaled = pd.DataFrame(
-            scaler.transform(df_valid[num_cols]),
-            columns=num_cols, index=df_valid.index
-        )
-        df_scaled = pd.concat([df_num_scaled, df_valid[categorical_cols]], axis=1)
-        print('Scaling completed...')
-        
-        # Select only expected features
-        df_scaled_select = df_scaled[model_feature_names]
-        print("Columns in scaled dataset:", df_scaled_select.columns.tolist())
-        print('Shape of dataframe:', df_scaled_select.shape)
-        
-        chunk_size = 100000
-        chunks = split_dataframe(df_scaled_select, chunk_size)
-        
-        tmp = Path('FinalOutputs/Predict') / grid
-        tmp.mkdir(parents=True, exist_ok=True)
-        
-        inFiles = list(tmp.glob('data_*.csv'))
-        if not inFiles:
-            for i, chunk in enumerate(chunks):
-                chunk.to_csv(tmp / f'data_{i}.csv', index=False)
-            inFiles = list(tmp.glob('data_*.csv'))
-        
-        for i, file in enumerate(inFiles):
-            print(f'Predicting classification for grid {grid}, chunk {i}')
-            predictClass(file, tmp, i, best_model, scaler, model_feature_names)
-        
-        print('Merging the classified data...')
-        toMergeC = list(tmp.glob('class_*.csv'))
-        if not toMergeC:
-            print(f"No class_*.csv files found for grid {grid}. Skipping merge step.")
-            return
-        
-        toMergeCF = sorted(toMergeC, key=lambda x: extract_index(str(x)))
-        dfsC = []
-        for i in toMergeCF:
-            print(f"Reading dataframe {i}")
-            df_chunk = pd.read_csv(i)
-            if 'Confidence' not in df_chunk.columns:
-                print(f"Error: 'Confidence' column missing in {i}")
-                return
-            subset = df_chunk[['Class', 'Confidence']]
-            dfsC.append(subset)
-        MergedC = pd.concat(dfsC)
-        
-        # Create full prediction and confidence arrays with NaNs
-        full_class_pred = np.full(shape=len(df), fill_value=np.nan)
-        full_confidence_pred = np.full(shape=len(df), fill_value=np.nan)
-        full_class_pred[valid_mask] = MergedC['Class'].values
-        full_confidence_pred[valid_mask] = MergedC['Confidence'].values
-        
-        # Validate confidence range
-        print(f"Confidence range for grid {grid}: {np.nanmin(full_confidence_pred):.3f} to {np.nanmax(full_confidence_pred):.3f}")
-        
-        # Reshape the 'Class' and 'Confidence' arrays
-        S_class = np.reshape(full_class_pred, (band.shape[0], band.shape[1]))
-        S_confidence = np.reshape(full_confidence_pred, (band.shape[0], band.shape[1]))
-        
-        # Apply the NoData mask
-        if nodata_value is not None:
-            S_class[band == nodata_value] = nodata_value
-            S_confidence[band == nodata_value] = nodata_value
-        
-        # Save the classified image
-        with rio.open(Path('FinalOutputs/Predict') / f'{grid}_predict_xgb.tif', 'w', **profile) as dst:
-            dst.write(S_class.astype(rio.float32), 1)
-        
-        # Save the confidence image
-        with rio.open(Path('FinalOutputs/Predict') / f'{grid}_confidence_xgb.tif', 'w', **profile) as dst:
-            dst.write(S_confidence.astype(rio.float32), 1)
-        
-        # Delete the temporary folder
-        shutil.rmtree(tmp)
-    except Exception as e:
-        print(f'Error predicting for {grid}: {e}')
-        return
+        output_file = predict_dir / f'{grid}_predict_xgb.tif'
+        if not output_file.exists():
+            df = pd.DataFrame()
+            for folder in subdirectories:
+                logger.info(f'Working on folder: {folder}')
+                files_grid = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
+                if not files_grid:
+                    logger.info(f"No files found for grid {grid} in {folder}")
+                    continue
+                for file_grid in files_grid:
+                    grid_name = file_grid.name[:5]
+                    var = file_grid.name[6:-4]
+                    logger.info(f"Processing file: {file_grid.name}, Grid: {grid_name}, Variable: {var}")
+                    with rio.open(str(file_grid), 'r') as src:
+                        data = src.read(1).ravel()
+                        if 'EAST' not in df.columns:
+                            rows, cols = np.meshgrid(
+                                np.arange(src.height),
+                                np.arange(src.width),
+                                indexing="ij"
+                            )
+                            xs, ys = rio.transform.xy(src.transform, rows, cols)
+                            df['EAST'] = np.array(xs).ravel()
+                            df['NORTH'] = np.array(ys).ravel()
+                        df[var] = data
+            logger.info(f'Created dataframe for {grid}...')
+            logger.info(f"Dataframe columns: {df.columns.tolist()}")
+            # --- Ensure all columns are present, fill missing with NaN, consistent order ---
+            df_to_save = df.reindex(columns=all_possible_vars)
+            logger.info(f"Saving all possible columns for grid {grid}: {df_to_save.columns.tolist()}")
+            csv_path = outdir / (grid + '.csv')
+            df_to_save.to_csv(csv_path, index=False)
 
-# Main execution
-start = time.time()
-print('Extract extents from the grids...')
-path = "../../Data"
-grid = os.path.join(path, "England_ALC50_GRID.shp")
-extractExtent(grid, path)
+            # --- NEW: Predict class and confidence, save as raster ---
+            # Only use model features for prediction
+            df_pred = df_to_save[model_feature_names].copy()
+            nan_mask = df_pred.isna().any(axis=1)
+            df_pred_filled = df_pred.fillna(0)
+            # --- FIX: Ensure categorical columns have same dtype and categories as training ---
+            for col in categorical_cols:
+                if col in df_pred_filled.columns and col in dftrain.columns:
+                    train_cats = pd.Categorical(dftrain[col]).categories
+                    df_pred_filled[col] = pd.Categorical(df_pred_filled[col], categories=train_cats)
+            # Predict
+            class_values = best_model.predict(df_pred_filled)
+            if hasattr(best_model, 'predict_proba'):
+                prob_values = best_model.predict_proba(df_pred_filled)
+                confidence_values = np.max(prob_values, axis=1)
+            else:
+                prob_values = best_model.predict(df_pred_filled)
+                if prob_values.ndim == 1:
+                    confidence_values = prob_values
+                    class_values = (prob_values > 0.5).astype(int)
+                else:
+                    confidence_values = np.max(prob_values, axis=1)
+            # Add 1 to class if needed (for 1-based class)
+            class_values = class_values + 1
+            # Convert class_values to float to allow nodata assignment
+            class_values = class_values.astype(float)
+            # Set nodata_value where original data was nan
+            class_values[nan_mask] = nodata_value
+            confidence_values[nan_mask] = nodata_value
+            # Reshape to raster
+            # Use the shape and nodata mask from the reference raster (AAR) in the grid
+            first_raster = None
+            ref_nodata = None
+            ref_mask = None
+            for folder in subdirectories:
+                files_grid = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
+                if files_grid:
+                    # Prefer the AAR raster as reference if available
+                    aar_raster = [f for f in files_grid if f.name.startswith(f'{grid}_AAR')]
+                    if aar_raster:
+                        first_raster = aar_raster[0]
+                    else:
+                        first_raster = files_grid[0]
+                    break
+            if first_raster is not None:
+                with rio.open(str(first_raster), 'r') as src:
+                    height, width = src.height, src.width
+                    transform = src.transform
+                    crs = src.crs
+                    ref_nodata = src.nodata
+                    ref_data = src.read(1)
+                    # Create mask: True where input is nodata
+                    if ref_nodata is not None:
+                        ref_mask = (ref_data == ref_nodata)
+                    else:
+                        ref_mask = np.zeros((height, width), dtype=bool)
+                    class_raster = np.ascontiguousarray(class_values.reshape((height, width)).astype(np.float32))
+                    conf_raster = np.ascontiguousarray(confidence_values.reshape((height, width)).astype(np.float32))
+                    # Mask output: set to nodata_value where input is nodata
+                    class_raster[ref_mask] = nodata_value
+                    conf_raster[ref_mask] = nodata_value
+                    # Replace any remaining np.nan with nodata_value (shouldn't be needed, but safe)
+                    class_raster[np.isnan(class_raster)] = nodata_value
+                    conf_raster[np.isnan(conf_raster)] = nodata_value
+                    class_raster_path = predict_dir / f'{grid}_class.tif'
+                    conf_raster_path = predict_dir / f'{grid}_conf.tif'
+                    meta = src.meta.copy()
+                    meta.update({
+                        'count': 1,
+                        'dtype': 'float32',
+                        'nodata': nodata_value,
+                        'driver': 'GTiff',
+                        'height': height,
+                        'width': width,
+                        'transform': transform,
+                        'crs': crs,
+                        'tiled': True,
+                        'blockxsize': 256,
+                        'blockysize': 256,
+                        'BIGTIFF': 'YES',
+                    })
+                    # Write to /tmp first, then copy to DBFS
+                    import shutil
+                    tmp_class_path = f'/tmp/{grid}_class.tif'
+                    tmp_conf_path = f'/tmp/{grid}_conf.tif'
+                    with rio.open(tmp_class_path, 'w', **meta) as dst:
+                        dst.write(class_raster, 1)
+                    with rio.open(tmp_conf_path, 'w', **meta) as dst:
+                        dst.write(conf_raster, 1)
+                    # Copy to DBFS
+                    shutil.copy(tmp_class_path, class_raster_path)
+                    shutil.copy(tmp_conf_path, conf_raster_path)
+                    # Clean up temp files
+                    os.remove(tmp_class_path)
+                    os.remove(tmp_conf_path)
+                    class_raster_files.append(str(class_raster_path))
+                    conf_raster_files.append(str(conf_raster_path))
+                    logger.info(f"Saved class raster: {class_raster_path}")
+                    logger.info(f"Saved confidence raster: {conf_raster_path}")
+            else:
+                logger.warning(f"No raster found for grid {grid} to get shape/transform.")
 
-print('Prepare shapefile for each grid....')
-grid = os.path.join("../../Data/England_ALC50_GRID.shp")
-outgridpath = '../../Data/GridsPoly'
-os.makedirs(outgridpath, exist_ok=True)
-# split the shape file in different polygons
-splitShape(grid, outgridpath)
+    # --- Mosaic all class rasters and confidence rasters ---
+    if class_raster_files:
+        mosaic_class_path = predict_dir / 'mosaic_class.tif'
+        mosaic_rasters(class_raster_files, str(mosaic_class_path), nodata_value=nodata_value)
+        logger.info(f"Mosaic of class rasters saved to {mosaic_class_path}")
+    if conf_raster_files:
+        mosaic_conf_path = predict_dir / 'mosaic_conf.tif'
+        mosaic_rasters(conf_raster_files, str(mosaic_conf_path), nodata_value=nodata_value)
 
-
-print('Split the input rasters into grids...')
-# path to the tif file which needs to be split
-pathRaster = '../../Data/predictData/cofactors_used'
-
-# path to the shapefiles extents
-gridPath = '../../Data/ExtPath.txt'
-extents = '../../Data/Extent.txt'
-'''
-Grids = ReadGlaExtent(extents)  
-
-polygons = ReadGlaPoly(gridPath)
-
-# read the input rasters to split
-data = glob.glob(pathRaster + '/*.tif')
-print('input rasters to split: ', data)
-
-# split the grids for all input rasters
-for raster in data:
-    print(f'splitting grids for {raster}')
-    suffix = os.path.basename(raster)[:-4] 
-    outgrid = os.path.join(pathRaster, 'GRID', suffix)
-    os.makedirs(outgrid, exist_ok=True)
-    
-    for i in range(len(polygons[1])):
-        print('polygons[1][i]: ', polygons[1][i])
-        print('polygons[0][i]: ', polygons[0][i])
-        
-        # outgrid = os.path.join(outpath,polygons[0][i])
-        # os.makedirs(outgrid, exist_ok=True)
-        print('outgrid: ', outgrid)
-        
-        print('gdalwarp -overwrite -cutline ' + polygons[1][i] + ' ' + Grids[1][i] + ' -r near ' + raster + ' ' +
-                           outgrid + '/' +  polygons[0][i] + '_' + suffix + '.tif'  + ' ' + '-dstnodata' + ' ' + '-9999' )
-        
-        os.system('gdalwarp -overwrite -cutline ' + polygons[1][i] + ' ' + Grids[1][i] + ' -r near ' + raster + ' ' +
-                           outgrid + '/' +  polygons[0][i] + '_' + suffix + '.tif'  + ' ' + '-dstnodata' + ' ' + '-9999')
-    
-'''    
-path = Path('../../Data/predictData/cofactors_used/GRID/AAR/')
-files = list(path.glob('*.tif'))
-for file in files:
-    grid = file.name[:5]
-    output_file = Path('FinalOutputs/Predict') / f'{grid}_predict_xgb.tif'
-    if not output_file.exists():
-        predict(grid)
-
-print('Merging the grids together...')
-directory = 'FinalOutputs/Predict'
-os.makedirs(directory, exist_ok=True)
-# Merge class rasters
-filenames = glob.glob(os.path.join(directory, '*_predict_xgb.tif'))
-output_file = 'FinalOutputs/soil_predict_xgb_.tif'
-command = f"gdal_merge.py -a_nodata -9999 -o \"{output_file}\" " + " ".join([f"\"{file}\"" for file in filenames])
-os.system(command)
-
-# Merge confidence rasters
-confidence_filenames = glob.glob(os.path.join(directory, '*_confidence_xgb.tif'))
-confidence_output_file = 'FinalOutputs/soil_confidence_xgb_.tif'
-command = f"gdal_merge.py -a_nodata -9999 -o \"{confidence_output_file}\" " + " ".join([f"\"{file}\"" for file in confidence_filenames])
-os.system(command)
-
-end = time.time()
-timetaken = convert(end-start)
-print('Time taken for processing: ', timetaken)
+# Run main if this script is executed (not imported)
+if __name__ == "__main__":
+    main()
