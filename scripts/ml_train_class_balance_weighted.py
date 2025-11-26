@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Aug 14 13:42:04 2025
+Created on Tue Nov 25 14:42:04 2025
 
 @author: km000009
 """
@@ -62,38 +62,40 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     # Compute class weights
     sample_weights = compute_class_weights(y_train)
     
-    # Initialize XGBoost classifier for hyperparameter tuning
+    # Initialize XGBoost classifier for hyperparameter tuning with increased regularization
     base_model = xgb.XGBClassifier(
         random_state=42,
         enable_categorical=True,
         objective='multi:softmax',
         num_class=len(np.unique(y_train)),
         eval_metric='mlogloss',
-        tree_method='hist'
+        tree_method='hist',
+        # Add more regularization by default
+        reg_alpha=2,
+        reg_lambda=20
     )
     
-    # Define hyperparameter grid
+    # Define hyperparameter grid with stronger regularization and lower complexity
     param_grid = {
-    'n_estimators': [200, 300, 400],
-    'learning_rate': [0.05, 0.1, 0.2],
-    'max_depth': [4, 5, 6],
-    'min_child_weight': [5, 7, 10],
-    'gamma': [0.5, 1.0, 2.0],
-    'subsample': [0.6, 0.7, 0.8],
-    'colsample_bytree': [0.5, 0.6, 0.7],
-    'reg_lambda': [1, 10, 50],
-    'reg_alpha': [0.1, 1, 5]
+        'n_estimators': [100, 200, 300],
+        'learning_rate': [0.01, 0.05, 0.1],
+        'max_depth': [3, 4, 5],  # Lower max_depth to reduce complexity
+        'min_child_weight': [7, 10, 15],  # Higher min_child_weight to reduce overfitting
+        'gamma': [1.0, 2.0, 5.0],  # More pruning to reduce overfitting
+        'subsample': [0.6, 0.7, 0.8],
+        'colsample_bytree': [0.5, 0.6, 0.7],
+        'reg_lambda': [10, 20, 50],  # Stronger L2 regularization
+        'reg_alpha': [2, 5, 10]      # Stronger L1 regularization
     }
-    
     
     # Perform hyperparameter tuning
     random_search = RandomizedSearchCV(
         estimator=base_model,
         param_distributions=param_grid,
-        n_iter=50,  # Reduced for speed
-        cv=5,       # Reduced for speed
+        n_iter=30,  # Fewer iterations for speed
+        cv=5,
         scoring='f1_weighted',
-        n_jobs=-1,  # Parallel processing
+        n_jobs=-1,
         verbose=1,
         random_state=42,
         error_score='raise'
@@ -109,12 +111,13 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
     dvalid = xgb.DMatrix(X_valid, label=y_validate, enable_categorical=True)
     dtest = xgb.DMatrix(X_test, enable_categorical=True)
     
+    # Use more aggressive early stopping
     model = xgb.train(
         params={**best_params, 'objective': 'multi:softmax', 'num_class': len(np.unique(y_train)), 'eval_metric': 'mlogloss', 'tree_method': 'hist'},
         dtrain=dtrain,
         num_boost_round=best_params['n_estimators'],
         evals=[(dtrain, 'train'), (dvalid, 'valid')],
-        early_stopping_rounds=20,
+        early_stopping_rounds=10,  # More aggressive early stopping
         verbose_eval=False
     )
     
@@ -357,8 +360,12 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(7, 15, 1)
+    feature_counts = range(3, 15, 1)
     results = []
+    best_valid = 0
+    best_k = 0
+    patience = 2  # Stop if no improvement for 2 steps
+    patience_counter = 0
     
     for k in feature_counts:
         print(f"\nTraining with top {k} features...")
@@ -396,6 +403,17 @@ if __name__ == "__main__":
             result_entry['f1_valid'] = f1_valid
             result_entry['f1_test'] = f1_test
             results.append(result_entry)
+            
+            # Early stopping on feature count if validation does not improve
+            if acc_valid > best_valid:
+                best_valid = acc_valid
+                best_k = k
+                patience_counter = 0
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Validation accuracy did not improve for {patience} steps. Stopping feature addition at {k} features.")
+                    break
         except Exception as e:
             logging.error(f"Error training model with {k} features: {str(e)}")
             raise
