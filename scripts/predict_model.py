@@ -304,6 +304,7 @@ def main():
             first_raster = None
             ref_nodata = None
             ref_mask = None
+            elevation_mask = None  # Will hold mask for Elevation_dm
             for folder in subdirectories:
                 files_grid = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
                 if files_grid:
@@ -313,6 +314,14 @@ def main():
                         first_raster = aar_raster[0]
                     else:
                         first_raster = files_grid[0]
+                    # --- NEW: Find Elevation_dm raster for masking ---
+                    elev_raster = [f for f in files_grid if f.name.startswith(f'{grid}_Elevation_dm')]
+                    if elev_raster:
+                        with rio.open(str(elev_raster[0]), 'r') as elev_src:
+                            elev_data = elev_src.read(1)
+                            elev_nodata = elev_src.nodata
+                            # Mask: True where Elevation_dm is nodata
+                            elevation_mask = (elev_data == elev_nodata) if elev_nodata is not None else np.isnan(elev_data)
                     break
             if first_raster is not None:
                 with rio.open(str(first_raster), 'r') as src:
@@ -331,6 +340,10 @@ def main():
                     # Mask output: set to nodata_value where input is nodata
                     class_raster[ref_mask] = nodata_value
                     conf_raster[ref_mask] = nodata_value
+                    # --- NEW: Mask output where Elevation_dm is nodata ---
+                    if elevation_mask is not None:
+                        class_raster[elevation_mask] = nodata_value
+                        conf_raster[elevation_mask] = nodata_value
                     # Replace any remaining np.nan with nodata_value (shouldn't be needed, but safe)
                     class_raster[np.isnan(class_raster)] = nodata_value
                     conf_raster[np.isnan(conf_raster)] = nodata_value
