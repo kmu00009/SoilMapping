@@ -1,9 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Thu Aug 14 13:42:04 2025
-
-@author: km000009
-"""
 
 import pandas as pd
 import numpy as np
@@ -72,17 +67,18 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         tree_method='hist'
     )
     
-    # Define hyperparameter grid
+    # Define hyperparameter grid with stronger regularization to reduce overfitting
     param_grid = {
-    'n_estimators': [200, 300, 400],
-    'learning_rate': [0.05, 0.1, 0.2],
-    'max_depth': [4, 5, 6],
-    'min_child_weight': [5, 7, 10],
-    'gamma': [0.5, 1.0, 2.0],
-    'subsample': [0.6, 0.7, 0.8],
-    'colsample_bytree': [0.5, 0.6, 0.7],
-    'reg_lambda': [1, 10, 50],
-    'reg_alpha': [0.1, 1, 5]
+        'n_estimators': [100, 200, 300],  # Reduced from 200-400
+        'learning_rate': [0.01, 0.05, 0.1],  # Reduced from 0.05-0.2
+        'max_depth': [3, 4, 5],  # Reduced from 4-6
+        'min_child_weight': [7, 10, 15],  # Increased from 5-10
+        'gamma': [1.0, 2.0, 3.0],  # Increased from 0.5-2.0
+        'subsample': [0.5, 0.6, 0.7],  # Reduced from 0.6-0.8
+        'colsample_bytree': [0.4, 0.5, 0.6],  # Reduced from 0.5-0.7
+        'reg_lambda': [10, 50, 100],  # Increased from 1-50
+        'reg_alpha': [1, 5, 10],  # Increased from 0.1-5
+        'max_delta_step': [0, 1, 5]  # Added for imbalanced classes
     }
     
     
@@ -114,7 +110,7 @@ def train_and_evaluate(X_train, y_train, X_valid, y_validate, X_test, y_test, pa
         dtrain=dtrain,
         num_boost_round=best_params['n_estimators'],
         evals=[(dtrain, 'train'), (dvalid, 'valid')],
-        early_stopping_rounds=20,
+        early_stopping_rounds=30,  # Increased from 20
         verbose_eval=False
     )
     

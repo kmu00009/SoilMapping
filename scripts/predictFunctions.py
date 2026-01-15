@@ -15,6 +15,7 @@ import geopandas as gpd
 from osgeo import ogr
 import xgboost as xgb
 
+'''
 def extractExtent(shape, outpath):
     shape = os.path.abspath(shape)    
     # outpath = os.path.abspath(outpath)
@@ -94,7 +95,7 @@ def splitShape(shape, outdir):
         sgdf = gpd.GeoDataFrame([row], columns=gdf.columns, crs=gdf.crs)
         outpath = os.path.join(outdir, f'CODE50_{name}.shp')
         sgdf.to_file(outpath)
-
+'''
 def split_dataframe(df, chunk_size):
     """Split a DataFrame into smaller DataFrames of a specified chunk size."""
     num_chunks = len(df) // chunk_size + int(len(df) % chunk_size != 0)
