@@ -113,10 +113,10 @@ def load_ensemble_models(model_dir, pattern='model_11_features_seed*.joblib'):
     return models
 
 
-def predict(grid):
+def predict(grid, seed):
     # Load the pre-trained model and scaler
     try:
-        model_path = Path('/dbfs/mnt/lab/unrestricted/KritiM/classification/model_11_features_seed42.joblib')        
+        model_path = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/classification/model_11_features_seed{seed}.joblib')        
         scaler_path = Path('/dbfs/mnt/lab/unrestricted/KritiM/classification/scaler.joblib')
         best_model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
@@ -145,50 +145,50 @@ def predict(grid):
     subdirectories = [subdir for subdir in pathtogrids.iterdir() if subdir.is_dir()]
     subdirectories.sort()
     
-    df = pd.DataFrame()
-    for folder in subdirectories:
-        print(f'Working on folder: {folder}')
-        files = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
-        if not files:
-            print(f"No files found for grid {grid} in {folder}")
-            continue
-        for file in files:
-            grid_name = file.name[:5]
-            var = file.name[6:-4]
-            print(f"Processing file: {file.name}, Grid: {grid_name}, Variable: {var}")
-            with rio.open(file, 'r') as src:
-                data = src.read(1).ravel()
-                if 'EAST' not in df.columns:
-                    rows, cols = np.meshgrid(
-                        np.arange(src.height),
-                        np.arange(src.width),
-                        indexing="ij"
-                    )
-                    xs, ys = rio.transform.xy(src.transform, rows, cols)
-                    df['EAST'] = np.array(xs).ravel()
-                    df['NORTH'] = np.array(ys).ravel()
-                df[var] = data
-                
-    print(f'Created dataframe for {grid}...')
-    print("Dataframe columns:", df.columns.tolist())
-    
-    # Check for missing features
-    expected_features = scaler_feature_names + [col for col in categorical_cols if col in df.columns]
-    missing_features = [col for col in expected_features if col not in df.columns]
-    if missing_features:
-        print(f"Error: Missing features for grid {grid}: {missing_features}")
-        return
-    
     # Write dataframe to CSV
     outpath = Path('/dbfs/mnt/lab/unrestricted/KritiM')
     outdir = outpath / 'Table'
-    
-    try:
-        outdir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        print(f"Failed to create directory {outdir}: {e}")
-        raise
-    df.to_csv(outdir / (grid + '.csv'), index=False)
+    if not os.path.exists(outdir / (grid + '.csv')):
+        df = pd.DataFrame()
+        for folder in subdirectories:
+            print(f'Working on folder: {folder}')
+            files = [file for file in folder.glob(grid + '*.tif') if file.is_file()]
+            if not files:
+                print(f"No files found for grid {grid} in {folder}")
+                continue
+            for file in files:
+                grid_name = file.name[:5]
+                var = file.name[6:-4]
+                print(f"Processing file: {file.name}, Grid: {grid_name}, Variable: {var}")
+                with rio.open(file, 'r') as src:
+                    data = src.read(1).ravel()
+                    if 'EAST' not in df.columns:
+                        rows, cols = np.meshgrid(
+                            np.arange(src.height),
+                            np.arange(src.width),
+                            indexing="ij"
+                        )
+                        xs, ys = rio.transform.xy(src.transform, rows, cols)
+                        df['EAST'] = np.array(xs).ravel()
+                        df['NORTH'] = np.array(ys).ravel()
+                    df[var] = data
+                    
+        print(f'Created dataframe for {grid}...')
+        print("Dataframe columns:", df.columns.tolist())
+        
+        # Check for missing features
+        expected_features = scaler_feature_names + [col for col in categorical_cols if col in df.columns]
+        missing_features = [col for col in expected_features if col not in df.columns]
+        if missing_features:
+            print(f"Error: Missing features for grid {grid}: {missing_features}")
+            return        
+        
+        try:
+            outdir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            print(f"Failed to create directory {outdir}: {e}")
+            raise
+        df.to_csv(outdir / (grid + '.csv'), index=False)
     
     # Read one of the raster grid files for profile information
     pathraster = Path('/dbfs/mnt/lab/unrestricted/KritiM/GRID/AAR')
@@ -248,7 +248,7 @@ def predict(grid):
         chunk_size = 100000
         chunks = split_dataframe(df_scaled_select, chunk_size)
         
-        tmp = Path('/dbfs/mnt/lab/unrestricted/KritiM/Predict') / grid
+        tmp = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}') / grid
         tmp.mkdir(parents=True, exist_ok=True)
         
         inFiles = list(tmp.glob('data_*.csv'))
@@ -298,15 +298,34 @@ def predict(grid):
             S_confidence[band == nodata_value] = nodata_value
         
         # Save the classified image
-        with rio.open(Path('/dbfs/mnt/lab/unrestricted/KritiM/Predict') / f'{grid}_predict_xgb.tif', 'w', **profile) as dst:
+        tmp_dir = tempfile.mkdtemp()
+        tmp_predict = os.path.join(tmp_dir, f'{grid}_predict_xgb.tif')
+        with rio.open(tmp_predict, 'w', **profile) as dst:
             dst.write(S_class.astype(rio.float32), 1)
         
+        # Copy to DBFS mount
+        predict_path = f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}/{grid}_predict_xgb.tif'
+        shutil.copy2(tmp_predict, predict_path)
+
+        # Clean up
+        shutil.rmtree(tmp_dir)
+
+
         # Save the confidence image
-        with rio.open(Path('/dbfs/mnt/lab/unrestricted/KritiM/Predict') / f'{grid}_confidence_xgb.tif', 'w', **profile) as dst:
+        tmp_dir = tempfile.mkdtemp()
+        tmp_conf = os.path.join(tmp_dir, f'{grid}_confidence_xgb.tif')
+        with rio.open(tmp_conf, 'w', **profile) as dst:
             dst.write(S_confidence.astype(rio.float32), 1)
+
+        conf_path = f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}/{grid}_confidence_xgb.tif'
+        shutil.copy2(tmp_conf, conf_path)
         
         # Delete the temporary folder
+        shutil.rmtree(tmp_dir)
+
+        # Clean up the grid folder
         shutil.rmtree(tmp)
+
     except Exception as e:
         print(f'Error predicting for {grid}: {e}')
         return
@@ -316,10 +335,58 @@ start = time.time()
 
 path = Path('/dbfs/mnt/lab/unrestricted/KritiM/GRID/AAR')
 files = list(path.glob('*.tif'))
-for file in files:
-    grid = file.name[:5]
-    if grid=='ST_SE' or grid=='ST_SW':
-        output_file = Path('/dbfs/mnt/lab/unrestricted/KritiM/Predict') / f'{grid}_predict_xgb.tif'
-        if not output_file.exists():
-            predict(grid)
+grids = [file.name[:5] for file in files]
+seeds = [7, 42, 99, 123, 2024]
 
+for seed in seeds:
+    for grid in grids:
+        output_file = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}') / f'{grid}_predict_xgb.tif'
+        if not output_file.exists():
+            predict(grid, seed)
+
+    predict_dir = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}')
+    mosaic_dir = predict_dir / 'Mosaic'
+    mosaic_dir.mkdir(exist_ok=True)
+
+    # List all prediction and confidence rasters
+    predict_rasters = sorted(predict_dir.glob('*_predict_xgb.tif'))
+    confidence_rasters = sorted(predict_dir.glob('*_confidence_xgb.tif'))
+
+    def mosaic_and_save(raster_files, out_name, method='first'):
+        src_files = [rio.open(str(fp)) for fp in raster_files]
+        try:
+            mosaic, out_trans = rio_merge(src_files, method=method)
+            out_meta = src_files[0].meta.copy()
+            out_meta.update({
+                "driver": "GTiff",
+                "height": mosaic.shape[1],
+                "width": mosaic.shape[2],
+                "transform": out_trans,
+                "count": 1
+            })
+            # Write to local temp file first
+            temp_dir = tempfile.mkdtemp()
+            temp_path = os.path.join(temp_dir, str(out_name))  # Ensure out_name is string
+            with rio.open(temp_path, "w", **out_meta) as dest:
+                dest.write(mosaic[0], 1)
+            # Copy to DBFS
+            final_path = str(mosaic_dir / str(out_name))
+            shutil.copy2(temp_path, final_path)
+        finally:
+            shutil.rmtree(temp_dir)
+            for src in src_files:
+                src.close()
+
+    # Mosaic prediction rasters (use 'first' for class prediction)
+    mosaic_and_save(
+        predict_rasters,
+        'soil_predict_xgb_mosaic.tif',
+        method='first'
+    )
+
+    # Mosaic confidence rasters (use 'max' for confidence)
+    mosaic_and_save(
+        confidence_rasters,
+        'soil_confidence_xgb_mosaic.tif',  # FIX: pass as string, not Path
+        method='max'
+    )
