@@ -24,6 +24,11 @@ from scipy import stats
 
 NODATA_VALUE = -9999  # Use a single constant for nodata throughout
 
+def log_memory_usage(note=""):
+    process = psutil.Process(os.getpid())
+    mem = process.memory_info().rss / 1024 ** 2
+    print(f"[MEMORY] {note} RSS: {mem:.2f} MB")
+
 def convert(seconds):
     return time.strftime("%H:%M:%S", time.gmtime(seconds))
 
@@ -33,8 +38,6 @@ def split_dataframe(df, chunk_size):
     return [df.iloc[i*chunk_size:(i+1)*chunk_size] for i in range(num_chunks)]
 
 def predictClass(infile, outpath, i, classifier, scaler, feature_names):
-    import os
-
     try:
         df = pd.read_csv(infile)
         print(f"Processing chunk {i}")
@@ -172,7 +175,7 @@ def predict(grid, seed):
                         df['EAST'] = np.array(xs).ravel()
                         df['NORTH'] = np.array(ys).ravel()
                     df[var] = data
-                    
+                # File is closed here due to context manager
         print(f'Created dataframe for {grid}...')
         print("Dataframe columns:", df.columns.tolist())
         
@@ -326,6 +329,10 @@ def predict(grid, seed):
         # Clean up the grid folder
         shutil.rmtree(tmp)
 
+        # Explicitly run garbage collection and log memory
+        gc.collect()
+        log_memory_usage(f"After grid {grid}, seed {seed}")
+
     except Exception as e:
         print(f'Error predicting for {grid}: {e}')
         return
@@ -340,9 +347,13 @@ seeds = [7, 42, 99, 123, 2024]
 
 for seed in seeds:
     for grid in grids:
-        output_file = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}') / f'{grid}_predict_xgb.tif'
-        if not output_file.exists():
-            predict(grid, seed)
+        # Check if both prediction and confidence rasters exist for this grid and seed
+        predict_file = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}') / f'{grid}_predict_xgb.tif'
+        confidence_file = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}') / f'{grid}_confidence_xgb.tif'
+        # if not (predict_file.exists() and confidence_file.exists()):
+        #     predict(grid, seed)
+        # else:
+        #     print(f"Skipping prediction for grid {grid}, seed {seed} (files exist)")
 
     predict_dir = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}')
     mosaic_dir = predict_dir / 'Mosaic'
@@ -353,9 +364,21 @@ for seed in seeds:
     confidence_rasters = sorted(predict_dir.glob('*_confidence_xgb.tif'))
 
     def mosaic_and_save(raster_files, out_name, method='first'):
-        src_files = [rio.open(str(fp)) for fp in raster_files]
+        # Use context managers to avoid too many open files
+        if not raster_files:
+            print(f"No rasters to mosaic for {out_name}")
+            return
+        src_files = []
         try:
-            mosaic, out_trans = rio_merge(src_files, method=method)
+            for fp in raster_files:
+                src = rio.open(str(fp))
+                src_files.append(src)
+            nodata = src_files[0].nodata
+            mosaic, out_trans = rio_merge(
+                src_files,
+                method=method,
+                nodata=nodata
+            )
             out_meta = src_files[0].meta.copy()
             out_meta.update({
                 "driver": "GTiff",
@@ -371,22 +394,22 @@ for seed in seeds:
                 dest.write(mosaic[0], 1)
             # Copy to DBFS
             final_path = str(mosaic_dir / str(out_name))
+            os.makedirs(os.path.dirname(final_path), exist_ok=True)  # Ensure output dir exists
             shutil.copy2(temp_path, final_path)
+        except Exception as e:
+            print(f"Error during mosaicing {out_name}: {e}")
         finally:
-            shutil.rmtree(temp_dir)
             for src in src_files:
-                src.close()
+                try:
+                    src.close()
+                except Exception:
+                    pass
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            gc.collect()
+            log_memory_usage(f"After mosaicing {out_name}")
 
-    # Mosaic prediction rasters (use 'first' for class prediction)
-    mosaic_and_save(
-        predict_rasters,
-        'soil_predict_xgb_mosaic.tif',
-        method='first'
-    )
+    
 
-    # Mosaic confidence rasters (use 'max' for confidence)
-    mosaic_and_save(
-        confidence_rasters,
-        'soil_confidence_xgb_mosaic.tif',  # FIX: pass as string, not Path
-        method='max'
-    )
+    # Explicitly run garbage collection and log memory
+    gc.collect()
+    log_memory_usage(f"After mosaics for seed {seed}")
