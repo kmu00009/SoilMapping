@@ -353,7 +353,7 @@ if __name__ == "__main__":
     }).sort_values(by='Importance', ascending=False)
     
     # Select features incrementally
-    feature_counts = range(7, 15, 1)
+    feature_counts = range(2, 20, 1)
     results = []
     
     for k in feature_counts:
