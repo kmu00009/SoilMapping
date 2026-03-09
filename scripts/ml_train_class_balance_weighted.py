@@ -149,7 +149,7 @@ def train_and_evaluate_ensemble(X_train, y_train, X_valid, y_validate, X_test, y
     cr_test = classification_report(y_test, y_pred_test)
     # Write report
     report_content = f"""
-Ensemble Results for 11 features:
+Ensemble Results for 12 features:
 Best parameters (per seed): {best_params_list}
 Permutation Feature Importances (first seed):
 {feature_importance_list[0].to_string()}
@@ -192,7 +192,7 @@ Classification Report (Test):
             f.write(existing_content + report_content)
         logging.info(f"Report written to fallback location: {fallback_path}")
     end = time.time()
-    print(f"Time taken for 11 features (ensemble): {convert(end - start)}")
+    print(f"Time taken for 12 features (ensemble): {convert(end - start)}")
     return accuracy_train, accuracy_valid, accuracy_test, f1_train, f1_valid, f1_test
 
 if __name__ == "__main__":
@@ -264,14 +264,14 @@ if __name__ == "__main__":
         'Feature': X_train.columns,
         'Importance': perm_importance.importances_mean
     }).sort_values(by='Importance', ascending=False)
-    # Use only the 11 highest ranking features
-    selected_features = feature_importance_df['Feature'].head(11).values
+    # Use only the 12 highest ranking features
+    selected_features = feature_importance_df['Feature'].head(12).values
     X_train_subset = X_train[selected_features]
     X_valid_subset = X_valid[selected_features]
     X_test_subset = X_test[selected_features]
-    model_name = 'model_11_features'
-    report = 'report_11_features.txt'
-    logging.info(f"\nTraining ensemble model with 11 features...")
+    model_name = 'model_12_features'
+    report = 'report_12_features.txt'
+    logging.info(f"\nTraining ensemble model with 12 features...")
     logging.info(f"Memory before training: {get_memory_usage()}")
     feature_train_start = time.time()
     try:
@@ -280,10 +280,10 @@ if __name__ == "__main__":
             pathC, model_name, report, ENSEMBLE_SEEDS
         )
         feature_time = convert(time.time() - feature_train_start)
-        logging.info(f"Training with 11 features (ensemble) completed in {feature_time}")
+        logging.info(f"Training with 12 features (ensemble) completed in {feature_time}")
         logging.info(f"Memory after training: {get_memory_usage()}")
         results = [{
-            'num_features': 11,
+            'num_features': 12,
             'acc_train': acc_train,
             'acc_valid': acc_valid,
             'acc_test': acc_test,
@@ -292,11 +292,11 @@ if __name__ == "__main__":
             'f1_test': f1_test
         }]
     except Exception as e:
-        logging.error(f"Error training ensemble model with 11 features: {str(e)}")
+        logging.error(f"Error training ensemble model with 12 features: {str(e)}")
         raise
     results_df = pd.DataFrame(results)
-    results_df.to_csv(os.path.join(pathC, 'metrics_11_features.csv'), index=False)
-    print(f"Results saved to {os.path.join(pathC, 'metrics_11_features.csv')}")
+    results_df.to_csv(os.path.join(pathC, 'metrics_12_features.csv'), index=False)
+    print(f"Results saved to {os.path.join(pathC, 'metrics_12_features.csv')}")
     end = time.time()
     time_taken = convert(end-start)
     logging.info(f"Total processing time: {time_taken}")
