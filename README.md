@@ -16,7 +16,7 @@ Generates labelled soil samples for model training.
 
 **Notebook structure:**
 - **Cell 1:** Loads the cleaned soil profile output from `soil_data_qa.py` and classifies the profiles into soil types.  
-- **Cell 2:** Uses soil polygon shapefiles to extract predictor raster values at those locations, producing labelled soil samples.
+- **Cell 2:** Uses soil point shapefiles to extract predictor raster values at those locations, producing labelled soil samples.
 
 **Output:**  
 A dataset linking soil types with predictor variables.
