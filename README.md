@@ -26,9 +26,20 @@ Aligns all predictor rasters to a common reference raster.
 - Place all predictor rasters in the directory defined by `path`.  
 - Set `reference` as the raster used for alignment.
 
+### `scripts/dataPreparation.ipynb`
+
+**Purpose:**  
+Generates labelled soil samples for model training.
+
+**Notebook structure:**
+- **Cell 1:** Loads the cleaned soil profile output from `soil_data_qa.py` and classifies the profiles into soil types.  
+- **Cell 2:** Uses soil point shapefiles to extract predictor raster values at those locations, producing labelled soil samples.
+
+**Output:**  
+A dataset linking soil types with predictor variables.
+
 ### `scripts/ml_train_class_balance_weighted.py`
 Trains the XGBoost soil classification model, using class balancing and weighting to address imbalanced classes.
-
 
 ### `scripts/Raster_grids.py`
 Splits large predictor rasters into smaller grid tiles for efficient computation.  
