@@ -21,7 +21,7 @@ splitShape(grid, outgridpath)
 
 print('Split the input rasters into grids...')
 # path to the tif file which needs to be split
-pathRaster = '../../../Data/predictData/cofactors_used'
+pathRaster = '../../../Data/predictData/RasterPredictors'
 
 # path to the shapefiles extents
 gridPath = '../../../Data/ExtPath.txt'
