@@ -1,9 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Sep 15 10:25:31 2025
 
-@author: kriti.mukherjee
-"""
 # %pip install rasterio
 import time
 import pandas as pd
@@ -42,7 +38,7 @@ def predictClass(infile, outpath, i, classifier, scaler, feature_names):
         df = pd.read_csv(infile)
         print(f"Processing chunk {i}")
 
-        nan_mask = df.isna().any(axis=1)
+        nan_mask = df.isna().any(axis=1) # create a mask using missing values
         df_filled = df.fillna(0)
 
         df_pred = df_filled[feature_names]        
@@ -108,7 +104,7 @@ def get_model_feature_names(model_path):
         print(f"Error loading model or extracting feature names: {e}")
         return None
 
-def load_ensemble_models(model_dir, pattern='model_11_features_seed*.joblib'):
+def load_ensemble_models(model_dir, pattern='model_12_features_seed*.joblib'):
     model_paths = sorted(Path(model_dir).glob(pattern))
     models = [joblib.load(str(p)) for p in model_paths]
     if not models:
@@ -119,7 +115,7 @@ def load_ensemble_models(model_dir, pattern='model_11_features_seed*.joblib'):
 def predict(grid, seed):
     # Load the pre-trained model and scaler
     try:
-        model_path = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/classification/model_11_features_seed{seed}.joblib')        
+        model_path = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/classification/model_12_features_seed{seed}.joblib')        
         scaler_path = Path('/dbfs/mnt/lab/unrestricted/KritiM/classification/scaler.joblib')
         best_model = joblib.load(model_path)
         scaler = joblib.load(scaler_path)
@@ -141,8 +137,8 @@ def predict(grid, seed):
     # Prepare data for classification
     train_path = Path('/dbfs/mnt/lab/unrestricted/KritiM/classification/trainingSample.csv')
     dftrain = pd.read_csv(train_path)    
-    mode_values = {col: dftrain[col].mode()[0] for col in categorical_cols if col in dftrain.columns}
-    mean_values = dftrain.select_dtypes(include='number').mean()
+    # mode_values = {col: dftrain[col].mode()[0] for col in categorical_cols if col in dftrain.columns}
+    # mean_values = dftrain.select_dtypes(include='number').mean()
     traincols = dftrain.columns.tolist()
     pathtogrids = Path('/dbfs/mnt/lab/unrestricted/KritiM/GRID/')
     subdirectories = [subdir for subdir in pathtogrids.iterdir() if subdir.is_dir()]
