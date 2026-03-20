@@ -44,7 +44,7 @@ def predictClass(infile, outpath, i, classifier, scaler, feature_names):
         df_pred = df_filled[feature_names]        
 
         # --- Predict directly ---
-        class_values = classifier.predict(df_pred)
+        class_values = classifier.predict(df_pred) # invoking the model's built-in method to generate predictions
         prob_values = classifier.predict_proba(df_pred)
 
         confidence_values = np.max(prob_values, axis=1)
@@ -279,9 +279,9 @@ def predict(grid, seed):
         MergedC = pd.concat(dfsC)
         
         # Create full prediction and confidence arrays with NaNs
-        full_class_pred = np.full(shape=len(df), fill_value=np.nan)
+        full_class_pred = np.full(shape=len(df), fill_value=np.nan) # creates an array with all nan values
         full_confidence_pred = np.full(shape=len(df), fill_value=np.nan)
-        full_class_pred[valid_mask] = MergedC['Class'].values
+        full_class_pred[valid_mask] = MergedC['Class'].values # replace nan by valid data
         full_confidence_pred[valid_mask] = MergedC['Confidence'].values
         
         # Validate confidence range
