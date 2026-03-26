@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 
-# %pip install rasterio
 import time
 import pandas as pd
 import glob
@@ -351,58 +349,58 @@ for seed in seeds:
         # else:
         #     print(f"Skipping prediction for grid {grid}, seed {seed} (files exist)")
 
-    predict_dir = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}')
-    mosaic_dir = predict_dir / 'Mosaic'
-    mosaic_dir.mkdir(exist_ok=True)
+    # predict_dir = Path(f'/dbfs/mnt/lab/unrestricted/KritiM/Predict_{seed}')
+    # mosaic_dir = predict_dir / 'Mosaic'
+    # mosaic_dir.mkdir(exist_ok=True)
 
-    # List all prediction and confidence rasters
-    predict_rasters = sorted(predict_dir.glob('*_predict_xgb.tif'))
-    confidence_rasters = sorted(predict_dir.glob('*_confidence_xgb.tif'))
+    # # List all prediction and confidence rasters
+    # predict_rasters = sorted(predict_dir.glob('*_predict_xgb.tif'))
+    # confidence_rasters = sorted(predict_dir.glob('*_confidence_xgb.tif'))
 
-    def mosaic_and_save(raster_files, out_name, method='first'):
-        # Use context managers to avoid too many open files
-        if not raster_files:
-            print(f"No rasters to mosaic for {out_name}")
-            return
-        src_files = []
-        try:
-            for fp in raster_files:
-                src = rio.open(str(fp))
-                src_files.append(src)
-            nodata = src_files[0].nodata
-            mosaic, out_trans = rio_merge(
-                src_files,
-                method=method,
-                nodata=nodata
-            )
-            out_meta = src_files[0].meta.copy()
-            out_meta.update({
-                "driver": "GTiff",
-                "height": mosaic.shape[1],
-                "width": mosaic.shape[2],
-                "transform": out_trans,
-                "count": 1
-            })
-            # Write to local temp file first
-            temp_dir = tempfile.mkdtemp()
-            temp_path = os.path.join(temp_dir, str(out_name))  # Ensure out_name is string
-            with rio.open(temp_path, "w", **out_meta) as dest:
-                dest.write(mosaic[0], 1)
-            # Copy to DBFS
-            final_path = str(mosaic_dir / str(out_name))
-            os.makedirs(os.path.dirname(final_path), exist_ok=True)  # Ensure output dir exists
-            shutil.copy2(temp_path, final_path)
-        except Exception as e:
-            print(f"Error during mosaicing {out_name}: {e}")
-        finally:
-            for src in src_files:
-                try:
-                    src.close()
-                except Exception:
-                    pass
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            gc.collect()
-            log_memory_usage(f"After mosaicing {out_name}")
+    # def mosaic_and_save(raster_files, out_name, method='first'):
+    #     # Use context managers to avoid too many open files
+    #     if not raster_files:
+    #         print(f"No rasters to mosaic for {out_name}")
+    #         return
+    #     src_files = []
+    #     try:
+    #         for fp in raster_files:
+    #             src = rio.open(str(fp))
+    #             src_files.append(src)
+    #         nodata = src_files[0].nodata
+    #         mosaic, out_trans = rio_merge(
+    #             src_files,
+    #             method=method,
+    #             nodata=nodata
+    #         )
+    #         out_meta = src_files[0].meta.copy()
+    #         out_meta.update({
+    #             "driver": "GTiff",
+    #             "height": mosaic.shape[1],
+    #             "width": mosaic.shape[2],
+    #             "transform": out_trans,
+    #             "count": 1
+    #         })
+    #         # Write to local temp file first
+    #         temp_dir = tempfile.mkdtemp()
+    #         temp_path = os.path.join(temp_dir, str(out_name))  # Ensure out_name is string
+    #         with rio.open(temp_path, "w", **out_meta) as dest:
+    #             dest.write(mosaic[0], 1)
+    #         # Copy to DBFS
+    #         final_path = str(mosaic_dir / str(out_name))
+    #         os.makedirs(os.path.dirname(final_path), exist_ok=True)  # Ensure output dir exists
+    #         shutil.copy2(temp_path, final_path)
+    #     except Exception as e:
+    #         print(f"Error during mosaicing {out_name}: {e}")
+    #     finally:
+    #         for src in src_files:
+    #             try:
+    #                 src.close()
+    #             except Exception:
+    #                 pass
+    #         shutil.rmtree(temp_dir, ignore_errors=True)
+    #         gc.collect()
+    #         log_memory_usage(f"After mosaicing {out_name}")
 
     
 
